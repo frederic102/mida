@@ -1,0 +1,53 @@
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+.metadata
+**/doc/api/
+
+# Build
+/build/
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Platform: generated files
+**/windows/flutter/generated_plugin_registrant.cc
+**/windows/flutter/generated_plugin_registrant.h
+**/windows/flutter/generated_plugins.cmake
+
+# Binary dependencies (downloaded by scripts)
+/assets/binaries/
+/windows_binaries/
+/macos_binaries/
+/tools/
+
+# Distribution / installers
+*.exe
+*.dmg
+*.zip
+*.pkg
+*.msi
+installer.iss
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.env
+.env.*
+*.pem
+*.key
+
+# Misc
+.claude/
+/flutter/
+/web/
+/mida-video/
