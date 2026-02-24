@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import '../services/compress_service.dart';
 import '../../../core/utils/file_utils.dart';
 import '../../../core/services/platform_service.dart';
@@ -19,6 +20,7 @@ class _CompressScreenState extends State<CompressScreen> {
   int? _originalSize;
   int _selectedPreset = 500; // MB
   bool _isCustomSize = false;
+  bool _isDragging = false;
   final _customSizeController = TextEditingController();
 
   final List<int> _presets = [1000, 500, 300, 100, 50];
@@ -37,16 +39,26 @@ class _CompressScreenState extends State<CompressScreen> {
 
     if (result != null && result.files.isNotEmpty) {
       final file = result.files.first;
-      final filePath = file.path;
-
-      if (filePath != null) {
-        final fileSize = await File(filePath).length();
-        setState(() {
-          _selectedFilePath = filePath;
-          _selectedFileName = file.name;
-          _originalSize = fileSize;
-        });
+      if (file.path != null) {
+        await _setFile(file.path!, file.name);
       }
+    }
+  }
+
+  Future<void> _setFile(String filePath, String fileName) async {
+    final fileSize = await File(filePath).length();
+    setState(() {
+      _selectedFilePath = filePath;
+      _selectedFileName = fileName;
+      _originalSize = fileSize;
+    });
+  }
+
+  Future<void> _openOutputFolder(String filePath) async {
+    if (Platform.isWindows) {
+      await Process.run('explorer', ['/select,', filePath.replaceAll('/', '\\')]);
+    } else if (Platform.isMacOS) {
+      await Process.run('open', ['-R', filePath]);
     }
   }
 
@@ -57,7 +69,7 @@ class _CompressScreenState extends State<CompressScreen> {
     return _selectedPreset * 1024 * 1024;
   }
 
-  void _startCompress() {
+  Future<void> _startCompress() async {
     if (_selectedFilePath == null) return;
 
     final targetSize = _targetSizeBytes;
@@ -69,7 +81,12 @@ class _CompressScreenState extends State<CompressScreen> {
     }
 
     final service = context.read<CompressService>();
-    service.compress(_selectedFilePath!, targetSize);
+    await service.compress(_selectedFilePath!, targetSize);
+
+    if (service.currentTask?.status == CompressStatus.completed &&
+        service.currentTask?.outputPath != null) {
+      _openOutputFolder(service.currentTask!.outputPath!);
+    }
   }
 
   @override
@@ -184,66 +201,97 @@ class _CompressScreenState extends State<CompressScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            InkWell(
-              onTap: _pickFile,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(40),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: _selectedFilePath != null
-                        ? const Color(0xFF8B5CF6).withOpacity(0.5)
-                        : const Color(0xFF27272A),
-                    width: 2,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  color: _selectedFilePath != null
-                      ? const Color(0xFF8B5CF6).withOpacity(0.05)
-                      : const Color(0xFF18181B),
-                ),
-                child: Column(
-                  children: [
-                    Icon(
-                      _selectedFilePath != null
-                          ? Icons.video_file_rounded
-                          : Icons.upload_file_rounded,
-                      size: 56,
-                      color: _selectedFilePath != null
+            DropTarget(
+              onDragEntered: (_) => setState(() => _isDragging = true),
+              onDragExited: (_) => setState(() => _isDragging = false),
+              onDragDone: (details) async {
+                setState(() => _isDragging = false);
+                if (details.files.isNotEmpty) {
+                  final file = details.files.first;
+                  final path = file.path;
+                  final ext = path.split('.').last.toLowerCase();
+                  final videoExts = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'ts', 'm4v'];
+                  if (videoExts.contains(ext)) {
+                    await _setFile(path, path.split(Platform.pathSeparator).last);
+                  } else {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Please drop a video file.')),
+                      );
+                    }
+                  }
+                }
+              },
+              child: InkWell(
+                onTap: _pickFile,
+                borderRadius: BorderRadius.circular(12),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(40),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: _isDragging
                           ? const Color(0xFF8B5CF6)
-                          : const Color(0xFF71717A),
+                          : _selectedFilePath != null
+                              ? const Color(0xFF8B5CF6).withOpacity(0.5)
+                              : const Color(0xFF27272A),
+                      width: _isDragging ? 2.5 : 2,
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      _selectedFileName ?? 'Click to select video file',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: _selectedFilePath != null
-                                ? const Color(0xFFFAFAFA)
-                                : const Color(0xFFA1A1AA),
-                            fontWeight: FontWeight.w600,
-                          ),
-                      textAlign: TextAlign.center,
-                    ),
-                    if (_originalSize != null) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF27272A),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          'Original size: ${FileUtils.formatFileSize(_originalSize!)}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: const Color(0xFFA1A1AA),
-                              ),
-                        ),
+                    borderRadius: BorderRadius.circular(12),
+                    color: _isDragging
+                        ? const Color(0xFF8B5CF6).withOpacity(0.1)
+                        : _selectedFilePath != null
+                            ? const Color(0xFF8B5CF6).withOpacity(0.05)
+                            : const Color(0xFF18181B),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        _isDragging
+                            ? Icons.file_download_rounded
+                            : _selectedFilePath != null
+                                ? Icons.video_file_rounded
+                                : Icons.upload_file_rounded,
+                        size: 56,
+                        color: _isDragging || _selectedFilePath != null
+                            ? const Color(0xFF8B5CF6)
+                            : const Color(0xFF71717A),
                       ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _isDragging
+                            ? 'Drop video file here'
+                            : _selectedFileName ?? 'Click or drag & drop video file',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: _isDragging || _selectedFilePath != null
+                                  ? const Color(0xFFFAFAFA)
+                                  : const Color(0xFFA1A1AA),
+                              fontWeight: FontWeight.w600,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (_originalSize != null && !_isDragging) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF27272A),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'Original size: ${FileUtils.formatFileSize(_originalSize!)}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFFA1A1AA),
+                                ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -600,23 +648,67 @@ class _CompressScreenState extends State<CompressScreen> {
                   ),
                 ),
                 if (task.compressedSize != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF22C55E).withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'Result: ${FileUtils.formatFileSize(task.compressedSize!)}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF22C55E),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF22C55E).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Result: ${FileUtils.formatFileSize(task.compressedSize!)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF22C55E),
+                          ),
+                        ),
                       ),
-                    ),
+                      if (task.status == CompressStatus.completed && task.outputPath != null) ...[
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: () => _openOutputFolder(task.outputPath!),
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF8B5CF6).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                              ),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.folder_open_rounded,
+                                  size: 14,
+                                  color: Color(0xFF8B5CF6),
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Open Folder',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF8B5CF6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
               ],
             ),

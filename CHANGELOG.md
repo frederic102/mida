@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.0] - 2026-02-24
+
+### Added
+- Drag & drop support for video file selection in Compress
+- Auto-open output folder on compression complete
+- "Open Folder" button on completed compression tasks
+
+### Fixed
+- Compression failing (Pass 1) due to pass log file permission issues
+- Better error messages showing actual FFmpeg errors instead of generic failure
+
 ## [1.0.0] - 2025-02-15
 
 ### Initial Release

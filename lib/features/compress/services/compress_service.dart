@@ -122,6 +122,10 @@ class CompressService extends ChangeNotifier {
 
     currentTask!.outputPath = uniquePath;
 
+    // Use temp directory for pass log files to avoid permission issues
+    final tempDir = Directory.systemTemp;
+    final passLogFile = '${tempDir.path}/ffmpeg2pass_${DateTime.now().millisecondsSinceEpoch}';
+
     // Two-pass encoding for better quality
     final pass1Args = [
       '-y',
@@ -129,6 +133,7 @@ class CompressService extends ChangeNotifier {
       '-c:v', 'libx264',
       '-b:v', '${videoBitrate}',
       '-pass', '1',
+      '-passlogfile', passLogFile,
       '-an',
       '-f', 'null',
       Platform.isWindows ? 'NUL' : '/dev/null',
@@ -140,14 +145,17 @@ class CompressService extends ChangeNotifier {
       '-c:v', 'libx264',
       '-b:v', '${videoBitrate}',
       '-pass', '2',
+      '-passlogfile', passLogFile,
       '-c:a', 'aac',
       '-b:a', '${audioBitrate}',
       uniquePath,
     ];
 
     // Pass 1
+    final pass1Stderr = StringBuffer();
     final pass1Process = await Process.start(ffmpegPath, pass1Args);
     pass1Process.stderr.transform(const SystemEncoding().decoder).listen((line) {
+      pass1Stderr.write(line);
       final progress = _parseFFmpegProgress(line, durationSeconds);
       if (progress != null) {
         currentTask!.progress = progress * 0.5; // First pass = 0-50%
@@ -157,12 +165,15 @@ class CompressService extends ChangeNotifier {
 
     var exitCode = await pass1Process.exitCode;
     if (exitCode != 0) {
-      throw Exception('Compression failed (Pass 1)');
+      final errorDetail = _extractFFmpegError(pass1Stderr.toString());
+      throw Exception('Compression failed (Pass 1): $errorDetail');
     }
 
     // Pass 2
+    final pass2Stderr = StringBuffer();
     final pass2Process = await Process.start(ffmpegPath, pass2Args);
     pass2Process.stderr.transform(const SystemEncoding().decoder).listen((line) {
+      pass2Stderr.write(line);
       final progress = _parseFFmpegProgress(line, durationSeconds);
       if (progress != null) {
         currentTask!.progress = 0.5 + (progress * 0.5); // Second pass = 50-100%
@@ -172,13 +183,14 @@ class CompressService extends ChangeNotifier {
 
     exitCode = await pass2Process.exitCode;
     if (exitCode != 0) {
-      throw Exception('Compression failed (Pass 2)');
+      final errorDetail = _extractFFmpegError(pass2Stderr.toString());
+      throw Exception('Compression failed (Pass 2): $errorDetail');
     }
 
     // Cleanup pass log files
     try {
-      await File('ffmpeg2pass-0.log').delete();
-      await File('ffmpeg2pass-0.log.mbtree').delete();
+      await File('$passLogFile-0.log').delete();
+      await File('$passLogFile-0.log.mbtree').delete();
     } catch (_) {}
 
     currentTask!.progress = 1.0;
@@ -241,6 +253,25 @@ class CompressService extends ChangeNotifier {
       return totalDuration > 0 ? currentSeconds / totalDuration : 0;
     }
     return null;
+  }
+
+  String _extractFFmpegError(String stderr) {
+    // Look for the last meaningful error line from ffmpeg
+    final lines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    for (final line in lines.reversed) {
+      final trimmed = line.trim();
+      if (trimmed.startsWith('Error') ||
+          trimmed.startsWith('error') ||
+          trimmed.contains('No such file') ||
+          trimmed.contains('Invalid') ||
+          trimmed.contains('Permission denied') ||
+          trimmed.contains('could not')) {
+        return trimmed;
+      }
+    }
+    // Return last few lines if no specific error found
+    final tail = lines.length > 3 ? lines.sublist(lines.length - 3) : lines;
+    return tail.join(' | ');
   }
 
   void clearCurrentTask() {
