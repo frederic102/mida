@@ -20,11 +20,14 @@ import '../extractors/media_models.dart';
 /// lane's [guardedRequest] (manual bounded redirect-following with a
 /// per-hop re-check) is added on top.
 ///
-/// This is a syntactic check only (no DNS resolution): it inspects
-/// [Uri.host] as written, via [InternetAddress.tryParse]. A hostname that
-/// only *resolves* to a private address later (DNS rebinding) is a
-/// different, larger defense (would need an async resolve-then-check at
-/// the point of the actual socket connect) and is out of scope here.
+/// [isDisallowedHost] itself is a syntactic check only (no DNS
+/// resolution): it inspects [Uri.host] as written, via
+/// [InternetAddress.tryParse], and stays synchronous on purpose since
+/// several call sites need a quick sync check. A hostname that only
+/// *resolves* to a private address (DNS rebinding) needs an async
+/// resolve-then-check instead; [guardedRequest] does that itself (see
+/// [_assertResolvesToPublicHost]) since it is already async and is the
+/// single choke point every actual network request goes through.
 class HostPolicy {
   const HostPolicy._();
 
@@ -47,6 +50,10 @@ class HostPolicy {
     final address = InternetAddress.tryParse(normalized);
     if (address == null) return false; // A real hostname; not this check's job to resolve it.
 
+    return _isDisallowedAddress(address);
+  }
+
+  static bool _isDisallowedAddress(InternetAddress address) {
     return address.type == InternetAddressType.IPv6
         ? _isDisallowedIPv6(address.rawAddress)
         : _isDisallowedIPv4(address.rawAddress);
@@ -97,36 +104,90 @@ class HostPolicy {
     return false;
   }
 
+  /// DNS-rebinding guard (security follow-up): [isDisallowedHost] only
+  /// looks at the literal text of a URL's host, so a hostname that is
+  /// itself syntactically public (`evil.example.com`) but whose DNS
+  /// answer is a private/loopback/link-local address slips straight
+  /// through that check. This resolves [url]'s host (skipped entirely for
+  /// a literal IP host - [isDisallowedHost] already covers that case) via
+  /// [resolveHost] and rejects if *any* returned address is disallowed.
+  ///
+  /// Residual risk, documented rather than hidden: `dart:io`'s
+  /// `HttpClient` does its own independent DNS resolution moments later,
+  /// when it actually opens the socket for the request this check guards.
+  /// A DNS answer that changes between these two resolutions (the classic
+  /// rebind) is not something this check - or anything short of pinning
+  /// the resolved address into the socket connect call itself, which
+  /// `dart:io`'s `HttpClient` does not expose a hook for - can close.
+  ///
+  /// A lookup failure (offline test sandbox, transient DNS error, genuine
+  /// NXDOMAIN) is treated as inconclusive, not disallowed: it is not
+  /// itself evidence the host is unsafe, and the real request just below
+  /// will attempt its own resolution and fail there, with its own more
+  /// specific error, if the host is truly unreachable.
+  static Future<void> _assertResolvesToPublicHost(
+    Uri url,
+    Future<List<InternetAddress>> Function(String host) resolveHost,
+  ) async {
+    final host = url.host;
+    if (host.isEmpty || InternetAddress.tryParse(host) != null) return;
+    List<InternetAddress> addresses;
+    try {
+      addresses = await resolveHost(host);
+    } catch (_) {
+      return;
+    }
+    for (final address in addresses) {
+      if (_isDisallowedAddress(address)) {
+        throw MediaExtractionException(
+          'UNSUPPORTED_URL',
+          'Refusing to fetch $url: its hostname ("$host") resolves to a private, loopback, or '
+              'link-local network address (${address.address}). This extractor only follows '
+              'public internet hosts, including ones a hostname\'s own DNS answer points at.',
+        );
+      }
+    }
+  }
+
   /// GET/HEAD with `followRedirects` handled manually so every hop
   /// (starting from [url]) can be re-checked against [isDisallowedHost]
+  /// (and, for a non-literal-IP hostname, [_assertResolvesToPublicHost])
   /// before it is fetched, up to [maxRedirectHops] redirects.
   ///
   /// [allowPrivateHosts] exempts only hop 0 (the URL the caller
-  /// explicitly asked for) from the host check; every hop reached via a
+  /// explicitly asked for) from both checks; every hop reached via a
   /// redirect is always checked regardless. This is what lets tests point
   /// a fetcher straight at a local fixture server (single hop, no
   /// redirect) while keeping the redirect-to-private-network guard fully
   /// strict and independently testable even in a hermetic suite.
   /// Production code must never set it.
+  ///
+  /// [resolveHost] defaults to the real `InternetAddress.lookup`; tests
+  /// inject a fake to prove the DNS-rebinding guard above without making
+  /// a real DNS query.
   static Future<HttpClientResponse> guardedRequest(
     HttpClient client,
     Uri url, {
     required bool useHead,
     void Function(HttpClientRequest request)? configureRequest,
     bool allowPrivateHosts = false,
+    Future<List<InternetAddress>> Function(String host) resolveHost = InternetAddress.lookup,
   }) async {
     var currentUrl = url;
     HttpClientResponse? response;
 
     for (var hop = 0; hop <= maxRedirectHops; hop++) {
       final hopIsExempt = allowPrivateHosts && hop == 0;
-      if (!hopIsExempt && isDisallowedHost(currentUrl)) {
-        throw MediaExtractionException(
-          'UNSUPPORTED_URL',
-          'Refusing to fetch $currentUrl: it resolves to a private, loopback, or link-local '
-              'network address. This extractor only follows public internet hosts, including '
-              'through redirects, to avoid a page making this app reach your local network.',
-        );
+      if (!hopIsExempt) {
+        if (isDisallowedHost(currentUrl)) {
+          throw MediaExtractionException(
+            'UNSUPPORTED_URL',
+            'Refusing to fetch $currentUrl: it resolves to a private, loopback, or link-local '
+                'network address. This extractor only follows public internet hosts, including '
+                'through redirects, to avoid a page making this app reach your local network.',
+          );
+        }
+        await _assertResolvesToPublicHost(currentUrl, resolveHost);
       }
 
       final request = useHead ? await client.headUrl(currentUrl) : await client.getUrl(currentUrl);

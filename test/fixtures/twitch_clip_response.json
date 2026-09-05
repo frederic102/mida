@@ -1,0 +1,17 @@
+{
+  "clip": {
+    "title": "Insane clutch",
+    "durationSeconds": 32,
+    "thumbnailURL": "https://clips-media-assets2.twitch.tv/EXAMPLE-preview-480x272.jpg",
+    "broadcaster": {"displayName": "shroud"},
+    "videoQualities": [
+      {"quality": "1080", "frameRate": 60.0, "sourceURL": "https://clips-media-assets2.twitch.tv/EXAMPLE-1080p60.mp4"},
+      {"quality": "720", "frameRate": 60.0, "sourceURL": "https://clips-media-assets2.twitch.tv/EXAMPLE-720p60.mp4"},
+      {"quality": "480", "frameRate": 30.0, "sourceURL": "https://clips-media-assets2.twitch.tv/EXAMPLE-480p30.mp4"}
+    ],
+    "playbackAccessToken": {
+      "value": "{\"authorization\":{\"forbidden\":false,\"reason\":\"\"}}",
+      "signature": "d2298f3b758c9cc844f24d6156e5181b1b4d81ac"
+    }
+  }
+}

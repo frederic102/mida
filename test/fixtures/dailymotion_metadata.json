@@ -1,0 +1,42 @@
+{
+  "url": "https://www.dailymotion.com/video/x2mjb0x",
+  "id": "x2mjb0x",
+  "title": "Download Vivian Maier By Vivian Maier PDF",
+  "duration": 54,
+  "mode": "vod",
+  "private": false,
+  "is_password_protected": false,
+  "owner": {
+    "id": "x1j9v45",
+    "username": "jayasikachantika",
+    "screenname": "Jayasikachantika"
+  },
+  "thumbnails": {
+    "60": "https://s2.dmcdn.net/v/9TjoH1gYI7J7OoZOd/x60",
+    "120": "https://s2.dmcdn.net/v/9TjoH1gYI7JGzwhLL/x120",
+    "240": "https://s2.dmcdn.net/v/9TjoH1gYI7JZ5MZHO/x240",
+    "480": "https://s1.dmcdn.net/v/9TjoH1gYI7JkrjcZ0/x480",
+    "720": "https://s2.dmcdn.net/v/9TjoH1gYI7Js8OqQ-/x720",
+    "1080": "https://s2.dmcdn.net/v/9TjoH1gYI7JkgBX20/x1080"
+  },
+  "qualities": {
+    "auto": [
+      {
+        "type": "application/x-mpegURL",
+        "url": "https://cdndirector.dailymotion.com/cdn/manifest/video/x2mjb0x.m3u8?sec=EXAMPLESIGNEDTOKEN&dmTs=145217&dmV1st=EXAMPLEV1ST"
+      }
+    ],
+    "480": [
+      {
+        "type": "video/mp4",
+        "url": "https://vod3.cf.dmcdn.net/sec2(EXAMPLE480)/video/756/487/158784657_mp4_h264_aac_hq.mp4"
+      }
+    ],
+    "380": [
+      {
+        "type": "video/mp4",
+        "url": "https://vod3.cf.dmcdn.net/sec2(EXAMPLE380)/video/756/487/158784657_mp4_h264_aac.mp4"
+      }
+    ]
+  }
+}

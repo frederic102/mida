@@ -32,6 +32,31 @@ File _writeFakeBrowser(Directory dir, {required String name, required List<Strin
   return file;
 }
 
+/// Minimal `implements Process` stand-in whose `exitCode` is already
+/// complete - for exercising `killAndAwaitExit`'s process-tree sweep
+/// without spawning (or waiting on) a real OS process.
+class _InstantExitFakeProcess implements Process {
+  @override
+  final int pid;
+
+  _InstantExitFakeProcess({required this.pid});
+
+  @override
+  Stream<List<int>> get stdout => const Stream.empty();
+
+  @override
+  Stream<List<int>> get stderr => const Stream.empty();
+
+  @override
+  IOSink get stdin => IOSink(StreamController<List<int>>().sink);
+
+  @override
+  Future<int> get exitCode => Future.value(0);
+
+  @override
+  bool kill([ProcessSignal signal = ProcessSignal.sigterm]) => true;
+}
+
 void main() {
   group('CdpClient (fake DevTools WebSocket endpoint)', () {
     late HttpServer server;
@@ -194,10 +219,17 @@ void main() {
         stopwatch.stop();
         final after = midaCdpTempDirs();
 
-        // Guard 1 (profile cleanup): no leftover mida_cdp_* dir survives a
-        // failed launch. Commenting out `_deleteProfileQuietly` in the
-        // `launch()` catch block turns this red.
-        expect(after, equals(before));
+        // Guard 1 (profile cleanup): no *new* mida_cdp_* dir survives a
+        // failed launch - `after.difference(before)`, not `after ==
+        // before`: `launch()` also fires a fire-and-forget
+        // BrowserTempCleanup.sweepStale() that can legitimately delete
+        // some *other*, genuinely stale (>1h old) directory from a prior
+        // run concurrently with this test's own before/after snapshots;
+        // that is a benign shrink, not the leak this guard exists to
+        // catch. Commenting out `BrowserTempCleanup.deleteQuietly` in the
+        // `launch()` catch block still turns this red (this test's own
+        // profile dir would be the one new entry in `after`).
+        expect(after.difference(before), isEmpty);
 
         // Guard 2 (process actually killed, not just our own await
         // returning): the .bat keeps appending to `marker` every tick
@@ -210,11 +242,15 @@ void main() {
         final countLater = marker.existsSync() ? marker.readAsLinesSync().length : 0;
         expect(countLater - countAtThrow, lessThan(3));
 
-        // launch() must not have blocked past its own connectTimeout plus
-        // a small margin waiting on the hung process.
-        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+        // launch() must not have blocked past roughly twice its own
+        // connectTimeout plus cleanup margin: it now tries a headed launch
+        // first and falls back to headless (docs/plan-phase5-coverage.md
+        // Lane A headed-first) - against this same hung fake browser, both
+        // attempts fail the same way, so the worst case is genuinely two
+        // full attempts back to back, not one.
+        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 10)));
       },
-      timeout: const Timeout(Duration(seconds: 15)),
+      timeout: const Timeout(Duration(seconds: 20)),
     );
 
     test('passes --remote-debugging-address=127.0.0.1, not just the port, to the browser executable', () async {
@@ -247,5 +283,27 @@ void main() {
       // copy before moving on).
       expect(args, contains('--remote-debugging-address=127.0.0.1'));
     }, timeout: const Timeout(Duration(seconds: 15)));
+  });
+
+  group('BrowserDevtoolsSession.killAndAwaitExit process-tree sweep', () {
+    test('invokes the injected processTreeKiller with the process\'s own pid', () async {
+      final process = _InstantExitFakeProcess(pid: 98765);
+      int? capturedPid;
+
+      await BrowserDevtoolsSession.killAndAwaitExit(
+        process,
+        processTreeKiller: (executable, arguments) async {
+          capturedPid = int.parse(arguments.last);
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+
+      // On non-Windows this override is never invoked at all (see
+      // BrowserProcessTree's own tests) - only assert the pid on Windows,
+      // where it is.
+      if (Platform.isWindows) {
+        expect(capturedPid, 98765);
+      }
+    });
   });
 }

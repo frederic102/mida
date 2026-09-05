@@ -1,0 +1,27 @@
+[
+  {"hydratable": "anonymousId", "data": "86822-716381-628316-846228"},
+  {
+    "hydratable": "sound",
+    "data": {
+      "id": 183978791,
+      "title": "Never Gonna Give You Up",
+      "duration": 213000,
+      "artwork_url": "https://i1.sndcdn.com/artworks-000123456789-EXAMPLE-t500x500.jpg",
+      "user": {"username": "officialrickastley", "permalink": "officialrickastley"},
+      "media": {
+        "transcodings": [
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:183978791/e6c4f524-EXAMPLE/stream/progressive",
+            "preset": "mp3_1_0",
+            "format": {"protocol": "progressive", "mime_type": "audio/mpeg"}
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:183978791/e6c4f524-EXAMPLE/stream/hls",
+            "preset": "mp3_1_0",
+            "format": {"protocol": "hls", "mime_type": "audio/mpeg"}
+          }
+        ]
+      }
+    }
+  }
+]

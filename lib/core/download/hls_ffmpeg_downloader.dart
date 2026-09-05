@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../extractors/media_models.dart';
+import '../net/cookie_scope.dart';
 import '../services/ffmpeg_locator.dart';
 import 'manifest_reference_scanner.dart';
 import 'media_merger.dart';
@@ -152,16 +154,37 @@ class HlsFfmpegDownloader {
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
   }) async {
     await _assertManifestSafe(url, headers);
     final args = buildArgs(
       url: url,
       outputPath: outputPath,
-      headers: headers,
+      headers: _withScopedCookie(url, headers, cookiesByDomain),
       audioOnly: audioOnly,
       audioCodecArgs: audioCodecArgs,
     );
     await run(args, totalDuration: totalDuration, onProgress: onProgress);
+  }
+
+  /// ffmpeg's own `-headers` applies identically to every request it makes
+  /// for this one manifest and every segment/key/init URL it references
+  /// (ffmpeg has no per-request-host header concept at all), so this can
+  /// only scope to the manifest [url]'s own host - a partial mitigation,
+  /// not the full per-request scoping `StreamDownloader` can do: it still
+  /// stops a cookie for a *different, unrelated* domain in
+  /// [cookiesByDomain] from riding along onto this manifest's own request,
+  /// which a flattened header would not have stopped.
+  Map<String, String> _withScopedCookie(
+    String url,
+    Map<String, String> headers,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
+  ) {
+    if (cookiesByDomain == null) return headers;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return headers;
+    final scoped = CookieScope.headerFor(uri, cookiesByDomain);
+    return scoped.isEmpty ? headers : {...headers, 'Cookie': scoped};
   }
 
   /// Delegates the actual fetch-and-check work to

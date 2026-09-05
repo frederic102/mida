@@ -10,7 +10,15 @@ import '../media_models.dart';
 import 'captured_format_builder.dart';
 import 'captured_media_classifier.dart';
 import '../../net/host_policy.dart';
+import 'capture_attempt.dart';
+import 'capture_drive_loop.dart';
+import 'network_signal_recorder.dart';
+import 'page_meta_reader.dart';
 import 'page_status_detector.dart';
+import 'page_status_exceptions.dart';
+import 'private_destination_guard.dart';
+import 'segment_manifest_prober.dart';
+import 'session_request_context.dart';
 
 /// Last-resort extractor: drives a real headless browser and records
 /// whatever media URLs the page itself requests, per
@@ -25,10 +33,34 @@ class BrowserCaptureExtractor implements MediaExtractor {
   /// directly with [useBrowserLoginSession].
   final Future<DevtoolsSession> Function({Duration connectTimeout})? _sessionLauncher;
   final CapturedFormatBuilder _formatBuilder;
+  final SegmentManifestProber _segmentProber;
   final Duration connectTimeout;
   final Duration loadTimeout;
+
+  /// How long to wait after `Page.loadEventFired` before the first
+  /// [PlaybackTrigger] attempt - many sites already start playback on
+  /// their own well within this window.
   final Duration postLoadDelay;
+
+  /// How long to wait, after the first [PlaybackTrigger] attempt, before
+  /// checking whether it produced a candidate and (if not) moving on to
+  /// [_driveCapture]'s bounded poll - see [CaptureDriveLoop.run].
   final Duration autoplayRetryDelay;
+
+  /// Max total time to poll for a first media candidate after
+  /// [postLoadDelay] (docs/plan-phase5-coverage.md Lane A #2: "0개면
+  /// 최대 25초까지 폴링"). A second [PlaybackTrigger] attempt fires at the
+  /// halfway point of this window - see [_driveCapture].
+  final Duration firstCandidateTimeout;
+
+  /// Once a first candidate exists, how much longer to keep collecting
+  /// (sibling-quality variants of the same stream usually arrive within a
+  /// second or two of each other).
+  final Duration variantSettleDelay;
+
+  /// How often [_driveCapture]'s poll loop re-checks for a first
+  /// candidate while waiting up to [firstCandidateTimeout].
+  final Duration pollInterval;
 
   /// When true (Settings: "Use browser login session"), the launched
   /// browser uses a staged copy of the user's real profile so the capture
@@ -45,57 +77,93 @@ class BrowserCaptureExtractor implements MediaExtractor {
     this.loadTimeout = const Duration(seconds: 20),
     this.postLoadDelay = const Duration(seconds: 3),
     this.autoplayRetryDelay = const Duration(seconds: 5),
+    this.firstCandidateTimeout = const Duration(seconds: 25),
+    this.variantSettleDelay = const Duration(seconds: 3),
+    this.pollInterval = const Duration(seconds: 1),
     this.useBrowserLoginSession = false,
   })  : _sessionLauncher = sessionLauncher,
-        _formatBuilder = CapturedFormatBuilder(httpClientFactory: httpClientFactory);
+        _formatBuilder = CapturedFormatBuilder(httpClientFactory: httpClientFactory),
+        _segmentProber = SegmentManifestProber(httpClientFactory: httpClientFactory);
 
   @override
   bool canHandle(Uri url) => url.scheme == 'http' || url.scheme == 'https';
 
   /// Production default (no [_sessionLauncher] injected) launches directly
-  /// with [useBrowserLoginSession] threaded through, rather than closing
-  /// over it in a stored function literal (a function literal cannot
-  /// itself declare an optional parameter's default value in Dart, which
-  /// the `{Duration connectTimeout}` shape here would otherwise need).
-  Future<DevtoolsSession> _launchSession({required Duration connectTimeout}) {
+  /// with [useBrowserLoginSession] and [preferHeaded] threaded through,
+  /// rather than closing over them in a stored function literal (a
+  /// function literal cannot itself declare an optional parameter's
+  /// default value in Dart, which the `{Duration connectTimeout}` shape
+  /// here would otherwise need). A test-injected [_sessionLauncher] never
+  /// sees [preferHeaded] at all - it has no headed/headless concept, and
+  /// [_attemptCapture]'s retry decision does not depend on it knowing.
+  Future<DevtoolsSession> _launchSession({required Duration connectTimeout, required bool preferHeaded}) {
     final launcher = _sessionLauncher;
     if (launcher != null) return launcher(connectTimeout: connectTimeout);
     return BrowserDevtoolsSession.launch(
       connectTimeout: connectTimeout,
       useBrowserLoginSession: useBrowserLoginSession,
+      preferHeaded: preferHeaded,
     );
   }
 
   @override
   Future<MediaInfo> extract(Uri url) async {
     HostPolicy.assertAllowedHost(url, context: 'this page');
-    final session = await _launchSession(connectTimeout: connectTimeout);
+    final first = await _attemptCapture(url, preferHeaded: true);
+    if (first.info != null) return first.info!;
+
+    if (shouldRetryHeadless(first, hasInjectedSessionLauncher: _sessionLauncher != null)) {
+      final retry = await _attemptCapture(url, preferHeaded: false);
+      if (retry.info != null) return retry.info!;
+      throw retry.error!;
+    }
+    throw first.error!;
+  }
+
+  Future<CaptureAttempt> _attemptCapture(Uri url, {required bool preferHeaded}) async {
+    final session = await _launchSession(connectTimeout: connectTimeout, preferHeaded: preferHeaded);
+    var loadFired = false;
     try {
-      return await _captureWith(session, url);
+      final info = await _captureWith(session, url, onLoadFired: (fired) => loadFired = fired);
+      return CaptureAttempt(info: info, loadFired: loadFired);
+    } on MediaExtractionException catch (e) {
+      return CaptureAttempt(error: e, loadFired: loadFired);
     } finally {
       await session.close();
     }
   }
 
-  Future<MediaInfo> _captureWith(DevtoolsSession session, Uri url) async {
+  Future<MediaInfo> _captureWith(DevtoolsSession session, Uri url, {required void Function(bool) onLoadFired}) async {
     final candidates = <String, CapturedMediaCandidate>{};
+    final segmentUrls = <String>{};
     int? mainDocumentStatus;
 
     final subscription = session.events.listen((event) {
-      _observe(event, candidates);
+      _observe(event, candidates, segmentUrls);
       mainDocumentStatus ??= _mainDocumentStatus(event);
+      // Independent of the classification above: adjudicated (and, off
+      // this event stream, replied to) on its own regardless of whether
+      // this event also happened to be media - see PrivateDestinationGuard.
+      unawaited(PrivateDestinationGuard.handle(session, event));
     });
     try {
       await session.send('Page.navigate', {'url': url.toString()});
-      await _waitForLoad(session);
-      await Future<void>.delayed(postLoadDelay);
+      onLoadFired(await _waitForLoad(session));
 
-      if (candidates.isEmpty) {
-        await _tryAutoplay(session);
-        await Future<void>.delayed(autoplayRetryDelay);
-      }
+      // Fail fast on a login wall, a bot-verification interstitial (never
+      // solved - see PageStatusDetector), or a 404: none of these three
+      // ever start producing media no matter how long _driveCapture waits
+      // or how many playback/consent-dialog nudges it fires, so there is
+      // nothing to gain by running that whole budget first (diagnostic
+      // run, docs/plan-phase5-coverage.md: Reddit alone burned 40s on a
+      // "Prove your humanity" page this way before this check existed).
+      final earlySignal = await _pageStatusSignal(session, url, mainDocumentStatus);
+      if (earlySignal != null) throw PageStatusExceptions.forSignal(earlySignal);
+
+      await _driveCapture(session, candidates);
 
       final domVideoUrls = await _domVideoElementUrls(session);
+      await _backfillFromPerformanceEntries(session, candidates, segmentUrls);
       var finalCandidates = CapturedMediaRanker.rank(candidates.values.toList(growable: false), domVideoUrls);
 
       HtmlSniffResult? domFallback;
@@ -109,6 +177,21 @@ class BrowserCaptureExtractor implements MediaExtractor {
         }
       }
 
+      final userAgent = await SessionRequestContext.userAgent(session);
+
+      // Lane A #4: nothing whole was ever classified, but the page did
+      // request HLS/DASH fragments directly - recover the manifest those
+      // fragments belong to by guessing at its directory's conventional
+      // filenames, rather than giving up with those fragments' own CDN
+      // traffic sitting right there unused.
+      if (finalCandidates.isEmpty && segmentUrls.isNotEmpty) {
+        final recovered = await _segmentProber.recoverFirst(segmentUrls, {
+          'User-Agent': userAgent,
+          'Referer': url.toString(),
+        });
+        if (recovered != null) finalCandidates = [recovered];
+      }
+
       if (finalCandidates.isEmpty) {
         throw await _noMediaException(session, url, domFallback, mainDocumentStatus);
       }
@@ -116,27 +199,33 @@ class BrowserCaptureExtractor implements MediaExtractor {
       // Reject before doing anything further with these URLs (our own
       // m3u8 GET below, or handing them back to the caller at all): a
       // page could otherwise get a capture pass to "discover" (and this
-      // app to later fetch) an internal/private network address.
+      // app to later fetch) an internal/private network address. This
+      // applies uniformly regardless of which of the paths above
+      // produced [finalCandidates] (network-observed, DOM fallback, or
+      // segment-manifest recovery) - none of them is exempt.
       for (final candidate in finalCandidates) {
         final candidateUrl = Uri.tryParse(candidate.url);
         if (candidateUrl != null) HostPolicy.assertAllowedHost(candidateUrl, context: 'a captured media URL');
       }
 
-      final meta = await _pageMeta(session);
-      final title = _titleFromMeta(meta) ?? domFallback?.title;
-      final thumbnailUrl = _thumbnailFromMeta(meta) ?? domFallback?.thumbnailUrl;
-      final userAgent = await _userAgent(session);
-      final cookieHeader = await _cookieHeader(session, url, finalCandidates);
+      final meta = await PageMetaReader.read((expression) => _evalString(session, expression));
+      final title = PageMetaReader.title(meta) ?? domFallback?.title;
+      final thumbnailUrl = PageMetaReader.thumbnail(meta) ?? domFallback?.thumbnailUrl;
+      final cookiesByDomain = await SessionRequestContext.cookiesByDomain(session, url, finalCandidates);
 
+      // UA/Referer only - never a blanket `Cookie` here (see
+      // `MediaInfo.cookiesByDomain`'s own doc): the master-playlist fetch
+      // just below still needs a cookie when the site gates it behind
+      // one, so it is scoped per candidate's own host instead.
       final requestHeaders = <String, String>{
         'User-Agent': userAgent,
         'Referer': url.toString(),
-        if (cookieHeader.isNotEmpty) 'Cookie': cookieHeader,
       };
 
       final formats = <MediaFormat>[];
       for (final candidate in finalCandidates) {
-        formats.addAll(await _formatBuilder.expandFormats(candidate, requestHeaders));
+        final scoped = SessionRequestContext.scopedHeaders(candidate, requestHeaders, cookiesByDomain);
+        formats.addAll(await _formatBuilder.expandFormats(candidate, scoped));
       }
 
       return MediaInfo(
@@ -146,48 +235,31 @@ class BrowserCaptureExtractor implements MediaExtractor {
         sourceUrl: url,
         formats: formats,
         requestHeaders: requestHeaders,
+        cookiesByDomain: cookiesByDomain,
       );
     } finally {
       await subscription.cancel();
     }
   }
 
-  void _observe(CdpEvent event, Map<String, CapturedMediaCandidate> candidates) {
-    if (event.method != 'Network.responseReceived') return;
-    final response = event.params['response'];
-    if (response is! Map) return;
-    final responseUrl = response['url'];
-    if (responseUrl is! String) return;
-    final mimeType = response['mimeType'] as String?;
-
-    final classified = CapturedMediaClassifier.classify(responseUrl, mimeType);
-    if (classified == null) return;
-
-    final contentLength = _parseContentLength(response['headers']);
-    final key = CapturedMediaClassifier.dedupeKey(classified.url);
-    final existing = candidates[key];
-    candidates[key] = existing == null
-        ? classified.copyWith(contentLength: contentLength, mimeType: mimeType)
-        : existing.copyWith(
-            // Prefer the largest content-length seen across every
-            // request for this URL (a Range-fragmented request's
-            // Content-Length is only that fragment's size, not the whole
-            // file's), and keep whichever mimeType we saw first.
-            contentLength: (contentLength != null && (existing.contentLength == null || contentLength > existing.contentLength!))
-                ? contentLength
-                : existing.contentLength,
-            mimeType: existing.mimeType ?? mimeType,
-          );
-  }
-
-  int? _parseContentLength(dynamic headers) {
-    if (headers is! Map) return null;
-    for (final entry in headers.entries) {
-      if (entry.key.toString().toLowerCase() == 'content-length') {
-        return int.tryParse(entry.value.toString());
-      }
+  /// Dispatches one CDP event to [NetworkSignalRecorder] - see that class
+  /// for the actual classification (this method's only job is picking
+  /// `event.params`'s right sub-object apart per method name).
+  void _observe(CdpEvent event, Map<String, CapturedMediaCandidate> candidates, Set<String> segmentUrls) {
+    switch (event.method) {
+      case 'Network.responseReceived':
+        final response = event.params['response'];
+        if (response is Map) {
+          NetworkSignalRecorder.recordResponse(response.cast<String, dynamic>(), candidates, segmentUrls);
+        }
+        return;
+      case 'Network.requestWillBeSent':
+        final request = event.params['request'];
+        if (request is Map) {
+          NetworkSignalRecorder.recordRequestWillBeSent(request.cast<String, dynamic>(), candidates, segmentUrls);
+        }
+        return;
     }
-    return null;
   }
 
   /// The HTTP status of the page's own top-level HTML document (the
@@ -209,37 +281,33 @@ class BrowserCaptureExtractor implements MediaExtractor {
     HtmlSniffResult? domFallback,
     int? mainDocumentStatus,
   ) async {
-    final meta = await _pageMeta(session);
-    final finalUrl = Uri.tryParse((meta?['href'] as String?) ?? '') ?? sourceUrl;
-    final title = _titleFromMeta(meta) ?? domFallback?.title;
-    final signal = PageStatusDetector.detect(finalUrl: finalUrl, title: title, mainDocumentStatusCode: mainDocumentStatus);
-
-    switch (signal) {
-      case PageStatusSignal.loginRequired:
-        return const MediaExtractionException(
-          'LOGIN_REQUIRED',
-          'This post needs a signed-in session to view. Browser network '
-              'capture cannot log in on your behalf; sign in to this site '
-              'in your regular browser and try a different post, or ask '
-              'the poster for a direct link.',
-        );
-      case PageStatusSignal.notFound:
-        return const MediaExtractionException(
-          'NOT_FOUND',
-          'This page returned Not Found. The video may have been removed, '
-              'or the URL may be incorrect. Check the link and try again.',
-        );
-      case null:
-        return const MediaExtractionException(
-          'NO_MEDIA_FOUND',
-          'The headless browser did not observe any media requests while '
-              'loading this page. The page may require login, or the '
-              'content may be private or removed.',
-        );
-    }
+    final signal = await _pageStatusSignal(session, sourceUrl, mainDocumentStatus, domFallback: domFallback);
+    return PageStatusExceptions.forSignal(signal);
   }
 
-  Future<void> _waitForLoad(DevtoolsSession session) async {
+  /// Shared by the fast early-exit in [_captureWith] and [_noMediaException]
+  /// (the late, "nothing was ever found" path) - one page-status read, one
+  /// classification, so the two call sites can never disagree about what a
+  /// given page's own title/URL/status code mean.
+  Future<PageStatusSignal?> _pageStatusSignal(
+    DevtoolsSession session,
+    Uri sourceUrl,
+    int? mainDocumentStatus, {
+    HtmlSniffResult? domFallback,
+  }) async {
+    final meta = await PageMetaReader.read((expression) => _evalString(session, expression));
+    final finalUrl = Uri.tryParse((meta?['href'] as String?) ?? '') ?? sourceUrl;
+    final title = PageMetaReader.title(meta) ?? domFallback?.title;
+    return PageStatusDetector.detect(finalUrl: finalUrl, title: title, mainDocumentStatusCode: mainDocumentStatus);
+  }
+
+  /// Whether `Page.loadEventFired` was actually observed within
+  /// [loadTimeout] - used by [_attemptCapture]/[extract] to decide whether
+  /// a media-less result is worth retrying headless (a page that never
+  /// finished loading at all is a much stronger "this session's render
+  /// may itself be the problem" signal than one that loaded fine and
+  /// simply had no media).
+  Future<bool> _waitForLoad(DevtoolsSession session) async {
     final loadCompleter = Completer<void>();
     final loadSub = session.events.listen((event) {
       if (event.method == 'Page.loadEventFired' && !loadCompleter.isCompleted) {
@@ -248,21 +316,36 @@ class BrowserCaptureExtractor implements MediaExtractor {
     });
     try {
       await loadCompleter.future.timeout(loadTimeout, onTimeout: () {});
+      return loadCompleter.isCompleted;
     } finally {
       await loadSub.cancel();
     }
   }
 
-  Future<void> _tryAutoplay(DevtoolsSession session) async {
-    try {
-      await session.send('Runtime.evaluate', const {
-        'expression': "document.querySelector('video') && document.querySelector('video').play()",
-      });
-    } catch (_) {
-      // Best-effort nudge; a page with no <video> element (or one that
-      // rejects programmatic play) should not abort the capture.
-    }
-  }
+  /// Delegates to [CaptureDriveLoop.run] - see that class for the actual
+  /// wait/retry/poll policy (kept out of this file to stay under the
+  /// project's 400-line cap).
+  Future<void> _driveCapture(DevtoolsSession session, Map<String, CapturedMediaCandidate> candidates) => CaptureDriveLoop.run(
+        session,
+        candidates,
+        postLoadDelay: postLoadDelay,
+        autoplayRetryDelay: autoplayRetryDelay,
+        firstCandidateTimeout: firstCandidateTimeout,
+        variantSettleDelay: variantSettleDelay,
+        pollInterval: pollInterval,
+      );
+
+  /// See [NetworkSignalRecorder.backfillFromPerformanceEntries].
+  Future<void> _backfillFromPerformanceEntries(
+    DevtoolsSession session,
+    Map<String, CapturedMediaCandidate> candidates,
+    Set<String> segmentUrls,
+  ) =>
+      NetworkSignalRecorder.backfillFromPerformanceEntries(
+        (expression) => _evalString(session, expression),
+        candidates,
+        segmentUrls,
+      );
 
   static const String _videoElementUrlsExpression = '''
 JSON.stringify(
@@ -300,68 +383,6 @@ JSON.stringify(
       return value is String ? value : null;
     } catch (_) {
       return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> _evalJson(DevtoolsSession session, String jsonExpression) async {
-    final raw = await _evalString(session, jsonExpression);
-    if (raw == null) return null;
-    try {
-      return (jsonDecode(raw) as Map).cast<String, dynamic>();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static const String _metaExpression = '''
-JSON.stringify({
-  title: document.title || null,
-  ogTitle: (document.querySelector('meta[property="og:title"]') || {}).content || null,
-  ogImage: (document.querySelector('meta[property="og:image"]') || {}).content || null,
-  href: (typeof location !== 'undefined' && location.href) || null
-})
-''';
-
-  Future<Map<String, dynamic>?> _pageMeta(DevtoolsSession session) => _evalJson(session, _metaExpression);
-
-  String? _titleFromMeta(Map<String, dynamic>? meta) {
-    final ogTitle = meta?['ogTitle'] as String?;
-    final rawTitle = meta?['title'] as String?;
-    if (ogTitle != null && ogTitle.isNotEmpty) return ogTitle;
-    if (rawTitle != null && rawTitle.isNotEmpty) return rawTitle;
-    return null;
-  }
-
-  String? _thumbnailFromMeta(Map<String, dynamic>? meta) {
-    final ogImage = meta?['ogImage'] as String?;
-    return (ogImage != null && ogImage.isNotEmpty) ? ogImage : null;
-  }
-
-  Future<String> _userAgent(DevtoolsSession session) async {
-    try {
-      final version = await session.sendBrowserLevel('Browser.getVersion');
-      final userAgent = version['userAgent'] as String?;
-      if (userAgent != null && userAgent.isNotEmpty) return userAgent;
-    } catch (_) {
-      // Fall through to the generic desktop UA below.
-    }
-    return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
-  }
-
-  Future<String> _cookieHeader(DevtoolsSession session, Uri pageUrl, List<CapturedMediaCandidate> candidates) async {
-    try {
-      final urls = <String>{pageUrl.toString(), for (final c in candidates) c.url}.toList();
-      final result = await session.send('Network.getCookies', {'urls': urls});
-      final cookies = result['cookies'];
-      if (cookies is! List) return '';
-      return cookies
-          .whereType<Map>()
-          .map((c) => '${c['name']}=${c['value']}')
-          .where((pair) => pair.isNotEmpty && !pair.startsWith('='))
-          .join('; ');
-    } catch (_) {
-      return '';
     }
   }
 

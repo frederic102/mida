@@ -1,50 +1,11 @@
 import 'dart:convert';
 
+import 'inline_json_scanner.dart';
 import 'media_url_probe.dart';
 import 'meta_tag_scanner.dart';
+import 'sniffed_media.dart';
 
-/// A media URL found while sniffing a page: already resolved to an
-/// absolute URL and classified to a recognized container by file
-/// extension (see [MediaUrlProbe.extensionContainers]). Anything that
-/// does not end in a recognized extension (tracker pixels, ad-click
-/// links, embed player pages, etc) never becomes a [SniffedMedia].
-class SniffedMedia {
-  final String url;
-  final String container;
-
-  const SniffedMedia({required this.url, required this.container});
-
-  @override
-  String toString() => 'SniffedMedia($container, $url)';
-}
-
-/// Result of one sniff pass over a page's HTML.
-///
-/// Duration is intentionally not modeled here: none of the sources in
-/// scope for step 1 of the plan (video/source tags, og/twitter meta,
-/// JSON-LD `contentUrl`, inline-script URL scan) reliably carry a
-/// duration, so callers always treat it as unknown for this path.
-class HtmlSniffResult {
-  final List<SniffedMedia> mediaUrls;
-  final String? title;
-  final String? thumbnailUrl;
-
-  /// True when at least one candidate URL was found on this page but
-  /// dropped because it signaled DRM (`/drm/`, `cbcs`, `cenc`, etc; see
-  /// [HtmlMediaSniffer._drmUrlMarkers]). Lets the caller distinguish "this
-  /// page genuinely has no video" from "this page's video is DRM'd", even
-  /// when [mediaUrls] ends up empty for both.
-  final bool anyDrmCandidatesDropped;
-
-  const HtmlSniffResult({
-    this.mediaUrls = const [],
-    this.title,
-    this.thumbnailUrl,
-    this.anyDrmCandidatesDropped = false,
-  });
-
-  bool get isEmpty => mediaUrls.isEmpty;
-}
+export 'sniffed_media.dart';
 
 /// Pure HTML sniffer (no network, no side effects): finds candidate media
 /// URLs in [html] using the detection order from
@@ -62,6 +23,22 @@ class HtmlMediaSniffer {
 
   static final RegExp _sourceSrcPattern = RegExp(
     '<source\\b[^>]*\\bsrc\\s*=\\s*(?:"([^"]+)"|' r"'([^']+)')",
+    caseSensitive: false,
+  );
+
+  /// `data-video-src`/`data-src`/`data-mp4`/`data-hls`: lazy-load
+  /// attributes some sites put the real media URL in instead of `src`
+  /// (the browser's own JS swaps it in on play/scroll). `data-src` in
+  /// particular is also extremely common on plain `<img data-src="...">`
+  /// lazy-loaded thumbnails; that is not a false-positive risk here
+  /// because every match still has to pass the same extension-allowlist
+  /// gate as everything else (`_classify` -> [MediaUrlProbe.containerFromExtension]),
+  /// so a `.jpg`/`.png` value is dropped just like it would be from any
+  /// other source. `data-setup` (Video.js JSON) is deliberately not
+  /// matched here: it is JSON, not a bare URL, and is handled by
+  /// [InlineJsonScanner] instead.
+  static final RegExp _dataAttrSrcPattern = RegExp(
+    '\\bdata-(?:video-src|src|mp4|hls)\\s*=\\s*(?:"([^"]+)"|' r"'([^']+)')",
     caseSensitive: false,
   );
 
@@ -116,30 +93,100 @@ class HtmlMediaSniffer {
     return _drmUrlMarkers.any(lower.contains);
   }
 
-  static HtmlSniffResult sniff(String html, Uri baseUrl) {
-    final seenUrls = <String>{};
-    final rawCandidates = <SniffedMedia>[];
+  /// Hard cap on distinct candidate URLs a single sniff pass will collect
+  /// (resource-exhaustion guard): bounds the number of downstream
+  /// format-expansion/reachability-probe calls one page can trigger,
+  /// regardless of how many matches its raw text/JSON actually contains.
+  static const int _maxCandidates = 200;
 
-    void addCandidate(String? rawUrl) {
+  static HtmlSniffResult sniff(String html, Uri baseUrl) {
+    // Keyed (not a plain List) so a URL seen again from a later source can
+    // be looked up and upgraded in place rather than appended as a
+    // duplicate. A plain Dart `Map` preserves insertion order, which is
+    // what keeps discovery order stable for `orderFormats` downstream.
+    final candidatesByUrl = <String, SniffedMedia>{};
+
+    // [width]/[height]/[bitrate] are only ever supplied by an
+    // inline-JSON-derived candidate. A URL already seen from an earlier,
+    // metadata-less source (e.g. a plain <video src>) is not replaced -
+    // its url/container stay put - but is *upgraded in place* to fill in
+    // whichever of these three fields it was still missing, since the two
+    // sources agreeing on the same URL is exactly the case that lets a
+    // JSON blob's resolution data attach to a format the page also
+    // exposes plainly (this is the mechanism that turns previously-empty
+    // `heights=[]` results into real values; see the extractor test's
+    // guard-can-fail case for what regresses without it). `contextBacked`
+    // only ever goes false -> true on an upgrade, never true -> false: once
+    // any source vouches for a URL, a later metadata-less mention of the
+    // same URL must not un-vouch for it.
+    void addCandidate(String? rawUrl, {int? width, int? height, int? bitrate, bool contextBacked = false}) {
       if (rawUrl == null || rawUrl.isEmpty) return;
       final classified = _classify(rawUrl, baseUrl);
       if (classified == null) return;
-      if (!seenUrls.add(classified.url)) return;
-      rawCandidates.add(classified);
+      final existing = candidatesByUrl[classified.url];
+      if (existing != null) {
+        candidatesByUrl[classified.url] = SniffedMedia(
+          url: existing.url,
+          container: existing.container,
+          width: existing.width ?? width,
+          height: existing.height ?? height,
+          bitrate: existing.bitrate ?? bitrate,
+          contextBacked: existing.contextBacked || contextBacked,
+        );
+        return;
+      }
+      if (candidatesByUrl.length >= _maxCandidates) return;
+      candidatesByUrl[classified.url] = SniffedMedia(
+        url: classified.url,
+        container: classified.container,
+        width: width,
+        height: height,
+        bitrate: bitrate,
+        contextBacked: contextBacked,
+      );
     }
 
+    // Explicit player elements/attributes: a `<video>`/`<source>` tag or a
+    // `data-video-src`/`data-hls`/`data-mp4` attribute is itself the
+    // strongest possible signal that this URL is a real playable file, not
+    // an incidental mention - context-backed unconditionally.
     for (final match in _videoSrcPattern.allMatches(html)) {
-      addCandidate(match.group(1) ?? match.group(2));
+      addCandidate(match.group(1) ?? match.group(2), contextBacked: true);
     }
     for (final match in _sourceSrcPattern.allMatches(html)) {
-      addCandidate(match.group(1) ?? match.group(2));
+      addCandidate(match.group(1) ?? match.group(2), contextBacked: true);
+    }
+    for (final match in _dataAttrSrcPattern.allMatches(html)) {
+      addCandidate(match.group(1) ?? match.group(2), contextBacked: true);
+    }
+
+    // og:video:width/height (and the Twitter Player Card equivalents) are a
+    // second inline-metadata resolution source, alongside inline-JSON blobs:
+    // sites that expose no __NEXT_DATA__/__INITIAL_STATE__ at all (a plain
+    // server-rendered page) still often carry these two tags right next to
+    // og:video/og:video:secure_url (a live fetch against streamable.com and
+    // archive.org confirmed this - both previously came back `heights=[]`).
+    // Read in a first pass so the value is already known by the time the
+    // og:video candidate itself is added below, regardless of which order
+    // the tags happen to appear on the page in.
+    int? ogVideoWidth;
+    int? ogVideoHeight;
+    for (final entry in MetaTagScanner.scan(html)) {
+      if (entry.key == 'og:video:width' || entry.key == 'twitter:player:width') {
+        ogVideoWidth ??= int.tryParse(entry.value);
+      } else if (entry.key == 'og:video:height' || entry.key == 'twitter:player:height') {
+        ogVideoHeight ??= int.tryParse(entry.value);
+      }
     }
 
     String? ogTitle;
     String? ogImage;
     for (final entry in MetaTagScanner.scan(html)) {
+      // og:video/twitter:player:stream are the site's own declared player
+      // metadata protocol - context-backed unconditionally, same as a
+      // <video> tag.
       if (_ogVideoProperties.contains(entry.key)) {
-        addCandidate(entry.value);
+        addCandidate(entry.value, width: ogVideoWidth, height: ogVideoHeight, contextBacked: true);
       } else if (entry.key == 'og:title') {
         ogTitle ??= entry.value;
       } else if (entry.key == 'og:image') {
@@ -147,10 +194,36 @@ class HtmlMediaSniffer {
       }
     }
 
+    // JSON-LD explicitly typed `VideoObject.contentUrl` - structured data
+    // the page asserts is a video, context-backed.
     for (final match in _jsonLdPattern.allMatches(html)) {
-      _harvestJsonLd(match.group(1) ?? '', addCandidate);
+      _harvestJsonLd(match.group(1) ?? '', (url) => addCandidate(url, contextBacked: true));
     }
 
+    // Inline-JSON blobs (__NEXT_DATA__, window.__INITIAL_STATE__/__NUXT__/
+    // __APOLLO_STATE__, <script type="application/json">, Video.js
+    // data-setup): far more reliable than the raw-text regex catch-all
+    // below, and the only source that carries width/height/bitrate.
+    // `contextBacked` here is whatever `JsonMediaWalker` itself judged (see
+    // its own false-positive guard doc): a URL sitting next to player-shaped
+    // metadata or inside a recognized player-config container is
+    // context-backed, a bare URL-shaped JSON string with neither is not.
+    for (final candidate in InlineJsonScanner.scanAll(html)) {
+      addCandidate(
+        candidate.url,
+        width: candidate.width,
+        height: candidate.height,
+        bitrate: candidate.bitrate,
+        contextBacked: candidate.contextBacked,
+      );
+    }
+
+    // Raw-text catch-all: a bare URL-shaped string found anywhere in the
+    // page/script text with no surrounding context at all - the exact
+    // shape an ad creative, tracker beacon, or unrelated preview clip's URL
+    // has too. Never context-backed; `GenericExtractor` must verify it via
+    // a reachability probe before trusting it as a format (security
+    // follow-up: this used to be trusted outright).
     final unescaped = _decodeEscapes(html);
     for (final match in _mediaUrlPattern.allMatches(unescaped)) {
       addCandidate(match.group(0));
@@ -160,7 +233,7 @@ class HtmlMediaSniffer {
 
     final clearCandidates = <SniffedMedia>[];
     var anyDroppedForDrm = false;
-    for (final candidate in rawCandidates) {
+    for (final candidate in candidatesByUrl.values) {
       if (_looksLikeDrmUrl(candidate.url)) {
         anyDroppedForDrm = true;
         continue;

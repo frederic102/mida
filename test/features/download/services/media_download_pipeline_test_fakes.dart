@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:mida/core/download/hls_ffmpeg_downloader.dart';
 import 'package:mida/core/download/media_merger.dart';
 import 'package:mida/core/download/output_stream_prober.dart';
+import 'package:mida/core/extractors/media_models.dart';
 
 /// Shared test doubles for `media_download_pipeline_test.dart` and
 /// `media_download_pipeline_retry_test.dart` (split across two files
@@ -34,6 +35,7 @@ class RecordingHlsDownloader extends HlsFfmpegDownloader {
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
   }) async {
     final args = buildArgs(
       url: url,
@@ -99,6 +101,7 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
   }) async {
     final args = buildArgs(
       url: url,

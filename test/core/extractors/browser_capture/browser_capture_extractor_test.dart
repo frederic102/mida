@@ -37,6 +37,16 @@ class FakeDevtoolsSession implements DevtoolsSession {
   Future<Map<String, dynamic>> sendBrowserLevel(String method, [Map<String, dynamic>? params]) async =>
       (await onSendBrowserLevel?.call(method, params)) ?? const {};
 
+  // No child (iframe) targets in these fixtures - PlaybackTrigger.triggerAll
+  // runs only on the top-level session, exactly as before it could reach
+  // into an iframe at all.
+  @override
+  List<String> get childSessionIds => const [];
+
+  @override
+  Future<Map<String, dynamic>> sendToSession(String sessionId, String method, [Map<String, dynamic>? params]) =>
+      send(method, params);
+
   @override
   Future<void> close() async {
     closed = true;
@@ -74,7 +84,7 @@ void main() {
           if (method == 'Network.getCookies') {
             return {
               'cookies': [
-                {'name': 'sid', 'value': 'abc123'},
+                {'name': 'sid', 'value': 'abc123', 'domain': 'cdn.example.com', 'path': '/', 'secure': true},
               ]
             };
           }
@@ -91,6 +101,9 @@ void main() {
         loadTimeout: const Duration(milliseconds: 30),
         postLoadDelay: const Duration(milliseconds: 5),
         autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(milliseconds: 20),
+        variantSettleDelay: const Duration(milliseconds: 5),
+        pollInterval: const Duration(milliseconds: 5),
       );
 
       final info = await extractor.extract(Uri.parse('https://example.com/page'));
@@ -102,7 +115,12 @@ void main() {
       expect(info.thumbnailUrl, 'https://img.example.com/t.jpg');
       expect(info.requestHeaders['User-Agent'], 'TestUA/1.0');
       expect(info.requestHeaders['Referer'], 'https://example.com/page');
-      expect(info.requestHeaders['Cookie'], 'sid=abc123');
+      // Lane A hardening (cookie domain scoping): requestHeaders carries
+      // only UA/Referer now - the cookie is exposed structured, scoped to
+      // the domain it was actually captured for, not flattened in here.
+      expect(info.requestHeaders.containsKey('Cookie'), isFalse);
+      expect(info.cookiesByDomain['cdn.example.com']?.single.name, 'sid');
+      expect(info.cookiesByDomain['cdn.example.com']?.single.value, 'abc123');
       expect(session.closed, isTrue);
     });
 
@@ -135,6 +153,9 @@ void main() {
         loadTimeout: const Duration(milliseconds: 30),
         postLoadDelay: const Duration(milliseconds: 5),
         autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(milliseconds: 20),
+        variantSettleDelay: const Duration(milliseconds: 5),
+        pollInterval: const Duration(milliseconds: 5),
       );
 
       final info = await extractor.extract(Uri.parse('https://example.com/page'));
@@ -197,6 +218,9 @@ void main() {
         loadTimeout: const Duration(milliseconds: 30),
         postLoadDelay: const Duration(milliseconds: 5),
         autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(milliseconds: 20),
+        variantSettleDelay: const Duration(milliseconds: 5),
+        pollInterval: const Duration(milliseconds: 5),
       );
 
       final info = await extractor.extract(Uri.parse('https://example.com/page'));
@@ -231,6 +255,9 @@ void main() {
         loadTimeout: const Duration(milliseconds: 30),
         postLoadDelay: const Duration(milliseconds: 5),
         autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(milliseconds: 20),
+        variantSettleDelay: const Duration(milliseconds: 5),
+        pollInterval: const Duration(milliseconds: 5),
       );
 
       final info = await extractor.extract(Uri.parse('https://example.com/page'));
@@ -259,6 +286,9 @@ void main() {
         loadTimeout: const Duration(milliseconds: 30),
         postLoadDelay: const Duration(milliseconds: 5),
         autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(milliseconds: 20),
+        variantSettleDelay: const Duration(milliseconds: 5),
+        pollInterval: const Duration(milliseconds: 5),
       );
 
       await expectLater(

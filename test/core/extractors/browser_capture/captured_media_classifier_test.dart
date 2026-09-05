@@ -29,6 +29,53 @@ void main() {
       expect(result, isNull);
     });
 
+    test('.ts segment is ignored even with a real video/mp2t mimeType (never its own candidate)', () {
+      // Guard can fail: this is the exact bug a mimeType-only fallback for
+      // extension-less URLs could reintroduce if `ts` were ever dropped
+      // from the recognized-extension list - an HLS segment must never
+      // become its own whole-file candidate.
+      final result = CapturedMediaClassifier.classify('https://cdn.example.com/hls/seg-001.ts', 'video/mp2t');
+      expect(result, isNull);
+    });
+
+    test('a real video/mp4 response with no extension anywhere in the URL is still a candidate (vk.com CDN shape)', () {
+      // docs/plan-phase5-coverage.md Lane A diagnostic (2026-09-05): vk.com
+      // serves real video/audio from a bare signed path like
+      // `okcdn.ru/?expires=...&type=2&...` with no dotted extension at
+      // all - the server's own Content-Type is trusted instead of
+      // discarding this traffic for lacking a URL extension.
+      final result = CapturedMediaClassifier.classify(
+        'https://vkvd674.okcdn.ru/?expires=1&type=2&bytes=0-100',
+        'video/mp4',
+      );
+      expect(result, isNotNull);
+      expect(result!.container, 'mp4');
+    });
+
+    test('audio/mpeg with no dotted extension (Bandcamp CDN shape) is a candidate with an mp3 container', () {
+      // Bandcamp's own CDN path segment is literally "mp3-128" (not a
+      // ".mp3" file extension), which the extension regex was never going
+      // to match either way.
+      final result = CapturedMediaClassifier.classify(
+        'https://t4.bcbits.com/stream/abc/mp3-128/123?token=xyz',
+        'audio/mpeg',
+      );
+      expect(result, isNotNull);
+      expect(result!.container, 'mp3');
+    });
+
+    test('video/webm with no extension falls back to a webm container, not mp4', () {
+      final result = CapturedMediaClassifier.classify('https://cdn.example.com/media?id=1', 'video/webm');
+      expect(result, isNotNull);
+      expect(result!.container, 'webm');
+    });
+
+    test('audio/mp4 with no extension falls back to an m4a container', () {
+      final result = CapturedMediaClassifier.classify('https://cdn.example.com/media?id=1', 'audio/mp4');
+      expect(result, isNotNull);
+      expect(result!.container, 'm4a');
+    });
+
     test('image/png is ignored', () {
       final result = CapturedMediaClassifier.classify('https://cdn.example.com/logo.png', 'image/png');
       expect(result, isNull);

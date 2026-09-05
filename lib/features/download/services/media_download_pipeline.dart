@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../../../core/download/caption_downloader.dart';
+import '../../../core/download/format_request_context.dart';
 import '../../../core/download/hls_ffmpeg_downloader.dart';
 import '../../../core/download/media_merger.dart';
 import '../../../core/download/stream_downloader.dart';
@@ -22,10 +23,9 @@ import 'download_service_io.dart';
 /// `StreamDownloader` (ranged GETs), `'hls'`/`'dash'` use
 /// `HlsFfmpegDownloader` (ffmpeg reads the manifest directly). Only the
 /// muxed and audio-only paths need that branch: an adaptive video+audio
-/// pair is YouTube-only in practice (its formats are always `'https'`), and
-/// none of the other extractors ever produce separate video-only +
-/// audio-only HLS/DASH formats (their m3u8/mpd formats are always built as
-/// a single muxed format, matching how HLS/DASH streams actually work).
+/// pair is YouTube-only in practice (`'https'` always), and no other
+/// extractor ever produces separate video-only + audio-only HLS/DASH
+/// formats (their m3u8/mpd formats are always a single muxed format).
 class MediaDownloadPipeline {
   final FormatSelector _selector;
   final StreamDownloader Function() _downloaderFactory;
@@ -36,10 +36,9 @@ class MediaDownloadPipeline {
   final DownloadOutcomeVerifier _verifier;
 
   /// Format candidates are tried in rank order up to this many times
-  /// before giving up (fewer if `FormatSelector.rank` returned fewer
-  /// candidates than this): a broken/mislabeled top pick (a DRM playlist,
-  /// a video-only rendition that reported itself as muxed, ...) should
-  /// not fail the whole download when other viable renditions exist.
+  /// before giving up (fewer if `FormatSelector.rank` returned fewer): a
+  /// broken/mislabeled top pick should not fail the whole download when
+  /// other viable renditions exist.
   static const maxAttempts = 3;
 
   MediaDownloadPipeline({
@@ -77,7 +76,7 @@ class MediaDownloadPipeline {
     }
 
     final baseName = FileUtils.sanitizeFileName(info.title.isEmpty ? info.id : info.title);
-    final headers = info.requestHeaders;
+    final requestContext = FormatRequestContext.fromInfo(info);
     final attempts = candidates.length < maxAttempts ? candidates.length : maxAttempts;
 
     Object? lastError;
@@ -97,15 +96,15 @@ class MediaDownloadPipeline {
       try {
         if (type == DownloadType.audio) {
           finalPath = await _downloadAudioOnly(
-            selected, options, baseName, outputDir, tempPrefix, headers, info.duration, onProgress, onStatus,
+            selected, options, baseName, outputDir, tempPrefix, requestContext, info.duration, onProgress, onStatus,
           );
         } else if (selected.isAdaptivePair) {
           finalPath = await _downloadAdaptivePair(
-            selected, options, baseName, outputDir, tempPrefix, headers, onProgress, onStatus,
+            selected, options, baseName, outputDir, tempPrefix, requestContext, onProgress, onStatus,
           );
         } else {
           finalPath = await _downloadMuxed(
-            selected, options, baseName, outputDir, tempPrefix, headers, info.duration, onProgress, onStatus,
+            selected, options, baseName, outputDir, tempPrefix, requestContext, info.duration, onProgress, onStatus,
           );
         }
 
@@ -115,7 +114,7 @@ class MediaDownloadPipeline {
         // status/failure decisions are based on.
         await _verifier.verifyOutput(finalPath, selected, type, onStatus);
 
-        await _downloadCaptions(info, options, baseName, outputDir, tempPrefix, headers, onStatus);
+        await _downloadCaptions(info, options, baseName, outputDir, tempPrefix, requestContext.headers, onStatus);
         onProgress?.call(1.0);
         return finalPath;
       } on Exception catch (e) {
@@ -154,7 +153,7 @@ class MediaDownloadPipeline {
     String baseName,
     String outputDir,
     String tempPrefix,
-    Map<String, String> headers,
+    FormatRequestContext requestContext,
     Duration? duration,
     void Function(double progress)? onProgress,
     void Function(String message)? onStatus,
@@ -172,7 +171,8 @@ class MediaDownloadPipeline {
         await _hlsDownloader.downloadVerified(
           url: audio.url,
           outputPath: partPath,
-          headers: headers,
+          headers: requestContext.headers,
+          cookiesByDomain: requestContext.cookiesByDomain,
           audioOnly: true,
           audioCodecArgs: _merger.audioCodecArgs(options.audioFormat),
           totalDuration: duration,
@@ -190,7 +190,7 @@ class MediaDownloadPipeline {
     final tempPath = '$tempPrefix.${audio.container}';
     try {
       final totalLen = audio.contentLength ?? 0;
-      await _downloadFormat(audio, tempPath, headers, (received) {
+      await _downloadFormat(audio, tempPath, requestContext, (received) {
         if (totalLen > 0) onProgress?.call((received / totalLen) * 0.9);
       });
 
@@ -214,7 +214,7 @@ class MediaDownloadPipeline {
     String baseName,
     String outputDir,
     String tempPrefix,
-    Map<String, String> headers,
+    FormatRequestContext requestContext,
     void Function(double progress)? onProgress,
     void Function(String message)? onStatus,
   ) async {
@@ -228,10 +228,10 @@ class MediaDownloadPipeline {
       final audioLen = audio.contentLength ?? 0;
       final totalLen = videoLen + audioLen;
 
-      await _downloadFormat(video, videoTemp, headers, (received) {
+      await _downloadFormat(video, videoTemp, requestContext, (received) {
         if (totalLen > 0) onProgress?.call((received / totalLen) * 0.9);
       });
-      await _downloadFormat(audio, audioTemp, headers, (received) {
+      await _downloadFormat(audio, audioTemp, requestContext, (received) {
         if (totalLen > 0) onProgress?.call(((videoLen + received) / totalLen) * 0.9);
       });
 
@@ -269,7 +269,7 @@ class MediaDownloadPipeline {
     String baseName,
     String outputDir,
     String tempPrefix,
-    Map<String, String> headers,
+    FormatRequestContext requestContext,
     Duration? duration,
     void Function(double progress)? onProgress,
     void Function(String message)? onStatus,
@@ -284,7 +284,8 @@ class MediaDownloadPipeline {
         await _hlsDownloader.downloadVerified(
           url: muxed.url,
           outputPath: partPath,
-          headers: headers,
+          headers: requestContext.headers,
+          cookiesByDomain: requestContext.cookiesByDomain,
           totalDuration: duration,
           onProgress: (p) => onProgress?.call(p * 0.9),
         );
@@ -300,7 +301,7 @@ class MediaDownloadPipeline {
     final tempPath = '$tempPrefix.${muxed.container}';
     try {
       final totalLen = muxed.contentLength ?? 0;
-      await _downloadFormat(muxed, tempPath, headers, (received) {
+      await _downloadFormat(muxed, tempPath, requestContext, (received) {
         if (totalLen > 0) onProgress?.call((received / totalLen) * 0.9);
       });
       onProgress?.call(0.9);
@@ -336,7 +337,7 @@ class MediaDownloadPipeline {
   Future<void> _downloadFormat(
     MediaFormat format,
     String outputPath,
-    Map<String, String> headers,
+    FormatRequestContext requestContext,
     void Function(int received)? onProgress,
   ) async {
     final downloader = _downloaderFactory();
@@ -344,7 +345,8 @@ class MediaDownloadPipeline {
       await downloader.download(
         url: format.url,
         outputPath: outputPath,
-        headers: headers,
+        headers: requestContext.headers,
+        cookiesByDomain: requestContext.cookiesByDomain,
         contentLength: format.contentLength,
         onProgress: onProgress == null ? null : (received, total) => onProgress(received),
       );

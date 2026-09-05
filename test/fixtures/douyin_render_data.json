@@ -1,0 +1,45 @@
+{
+  "3": {
+    "aweme": {
+      "detail": {
+        "aweme_id": "7318947853764676900",
+        "desc": "Example Douyin caption #fyp",
+        "author": {"nickname": "example_creator", "uid": "1"},
+        "video": {
+          "width": 1080,
+          "height": 1920,
+          "duration": 15000,
+          "cover": {"url_list": ["https://p3.douyinpic.com/EXAMPLE/cover.jpeg"]},
+          "play_addr": {
+            "width": 720,
+            "height": 1280,
+            "url_list": [
+              "http://mirror.douyin.com/EXAMPLE/watermarked.mp4",
+              "https://aweme.snssdk.com/EXAMPLE/watermarked.mp4"
+            ]
+          },
+          "bit_rate": [
+            {
+              "gear_name": "normal_1080_0",
+              "bit_rate": 2500000,
+              "play_addr": {
+                "width": 1080,
+                "height": 1920,
+                "url_list": ["https://aweme.snssdk.com/EXAMPLE/hq-1080.mp4"]
+              }
+            },
+            {
+              "gear_name": "normal_540_0",
+              "bit_rate": 900000,
+              "play_addr": {
+                "width": 540,
+                "height": 960,
+                "url_list": ["https://aweme.snssdk.com/EXAMPLE/540.mp4"]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

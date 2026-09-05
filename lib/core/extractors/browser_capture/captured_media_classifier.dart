@@ -61,8 +61,16 @@ class CapturedMediaClassifier {
     'application/octet-stream',
   };
 
+  /// `ts` (an HLS segment, `video/mp2t`) is recognized-but-excluded here
+  /// for the same reason `m4s` is (see [classify]'s own `container == null`
+  /// branch): matching it here, not just leaving it unrecognized, is what
+  /// stops the mimeType-only fallback below from wrongly picking it up as
+  /// its own whole-file candidate (guard-can-fail:
+  /// `network_signal_recorder_test.dart` "a .ts segment response is
+  /// tracked as a segment URL, never as its own candidate" goes red
+  /// without `ts` in this list).
   static final RegExp _mediaExtensionPattern = RegExp(
-    r'\.(mp4|m3u8|mpd|webm|m4s)(?:[/?&#]|$)',
+    r'\.(mp4|m3u8|mpd|webm|m4s|ts)(?:[/?&#]|$)',
     caseSensitive: false,
   );
 
@@ -91,6 +99,66 @@ class CapturedMediaClassifier {
         // matched condition A but must not become its own format.
         return container == null ? null : CapturedMediaCandidate(url: url, container: container);
       }
+      // No recognized extension anywhere in the URL at all - unlike the
+      // ambiguous _exactMimesRequiringExtension catch-alls (which really
+      // could be anything, so still require one), a real `video/*` or
+      // `audio/*` Content-Type straight from the server is already about
+      // as strong a media signal as exists. Some CDNs serve it from a
+      // bare, extension-less signed path with no dotted extension at all
+      // (docs/plan-phase5-coverage.md Lane A diagnostic, 2026-09-05:
+      // vk.com's okcdn.ru video/audio segments, Bandcamp's `mp3-128` path
+      // *segment* rather than a `.mp3` file extension - `.mp3` was not
+      // even in [_mediaExtensionPattern] to begin with). Trust the
+      // server's own mimeType instead of discarding real media traffic
+      // for lacking a URL extension neither CDN happens to use.
+      if (_mimePrefixesRequiringExtension.any(mime.startsWith)) {
+        return CapturedMediaCandidate(url: url, container: _containerForMimeSubtype(mime));
+      }
+    }
+
+    final manifestExt = _manifestExtensionPattern.firstMatch(url)?.group(1)?.toLowerCase();
+    if (manifestExt != null) {
+      return CapturedMediaCandidate(url: url, container: _extensionContainers[manifestExt]!);
+    }
+
+    return null;
+  }
+
+  /// Best-guess container from a `video/*`/`audio/*` mimeType's own
+  /// subtype, for the extension-less fallback above - matches
+  /// `SoundCloud`'s own established container vocabulary (`mp3`/`m4a`),
+  /// not a made-up one.
+  static String _containerForMimeSubtype(String mime) {
+    final subtype = mime.contains('/') ? mime.split('/')[1] : '';
+    if (subtype.contains('webm')) return 'webm';
+    if (subtype.contains('mp4')) return subtype.startsWith('mp4') && mime.startsWith('audio/') ? 'm4a' : 'mp4';
+    if (subtype.contains('mpeg') || subtype.contains('mp3')) return 'mp3';
+    if (subtype.contains('ogg')) return 'ogg';
+    if (subtype.contains('wav')) return 'wav';
+    return 'mp4';
+  }
+
+  /// Classifies a URL alone, with no `Content-Type` available at all -
+  /// for `Network.requestWillBeSent` (fires before any response exists)
+  /// and `performance.getEntriesByType('resource')` backfill (never
+  /// carries a mimeType either), both of which exist specifically to
+  /// catch a media request [classify] would otherwise never see paired
+  /// with a `Network.responseReceived` event (a cancelled/superseded
+  /// request, or a CDP event ordering race). Unlike [classify], this
+  /// trusts a `mp4`/`webm` extension in the URL on its own (not gated
+  /// behind a `video/`/`audio/` mimeType prefix) - that gate exists only
+  /// to protect [classify]'s otherwise-bare URL-extension check from
+  /// false positives on `responseReceived`'s frequent unrelated-asset
+  /// traffic; a URL observed at request time with no mimeType signal at
+  /// all has nothing stronger to gate on regardless. `.m4s`/`.ts`
+  /// fragment URLs are still never classified here either (same
+  /// exclusion as [classify]; see [_extensionContainers] lacking an
+  /// `m4s` entry).
+  static CapturedMediaCandidate? classifyByUrlOnly(String url) {
+    final ext = _mediaExtensionPattern.firstMatch(url)?.group(1)?.toLowerCase();
+    if (ext != null) {
+      final container = _extensionContainers[ext];
+      if (container != null) return CapturedMediaCandidate(url: url, container: container);
     }
 
     final manifestExt = _manifestExtensionPattern.firstMatch(url)?.group(1)?.toLowerCase();

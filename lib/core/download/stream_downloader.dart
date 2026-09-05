@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../extractors/media_models.dart';
+import '../net/cookie_scope.dart';
 import '../net/host_policy.dart';
 import '../utils/url_parser.dart';
 
@@ -68,6 +70,7 @@ class StreamDownloader {
     int? contentLength,
     void Function(int received, int? total)? onProgress,
     CancelToken? cancelToken,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
   }) async {
     final partPath = '$outputPath.part';
     final sink = File(partPath).openWrite();
@@ -78,7 +81,7 @@ class StreamDownloader {
       if (contentLength == null || contentLength <= 0) {
         // Source did not report a size (or reported zero): fetch in one
         // shot, we cannot chunk what we don't know the extent of.
-        received = await _fetchOnce(url, headers, sink, onProgress, null);
+        received = await _fetchOnce(url, headers, cookiesByDomain, sink, onProgress, null);
       } else {
         var offset = 0;
         while (offset < contentLength) {
@@ -89,6 +92,7 @@ class StreamDownloader {
           received += await _fetchChunkWithRetry(
             url,
             headers,
+            cookiesByDomain,
             offset,
             end,
             sink,
@@ -127,6 +131,7 @@ class StreamDownloader {
   Future<int> _fetchOnce(
     String url,
     Map<String, String> headers,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
     IOSink sink,
     void Function(int received, int? total)? onProgress,
     int? total,
@@ -134,7 +139,7 @@ class StreamDownloader {
     Object? lastError;
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        final response = await _get(url, headers, null, null);
+        final response = await _get(url, headers, cookiesByDomain, null, null);
         if (response.statusCode >= 400) {
           throw StreamDownloadException(
             'HTTP ${response.statusCode} fetching ${_redact(url)}',
@@ -158,6 +163,7 @@ class StreamDownloader {
   Future<int> _fetchChunkWithRetry(
     String url,
     Map<String, String> headers,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
     int start,
     int end,
     IOSink sink,
@@ -168,7 +174,7 @@ class StreamDownloader {
     Object? lastError;
     for (var attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        final response = await _get(url, headers, start, end);
+        final response = await _get(url, headers, cookiesByDomain, start, end);
         if (response.statusCode != 206 && response.statusCode != 200) {
           throw StreamDownloadException(
             'HTTP ${response.statusCode} fetching bytes $start-$end of ${_redact(url)}',
@@ -208,6 +214,7 @@ class StreamDownloader {
   Future<HttpClientResponse> _get(
     String url,
     Map<String, String> headers,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
     int? start,
     int? end,
   ) async {
@@ -220,6 +227,15 @@ class StreamDownloader {
       final request = await _httpClient.getUrl(uri);
       request.followRedirects = false;
       headers.forEach(request.headers.set);
+      // Recomputed per hop (not once up front): a redirect can land on a
+      // different host than [url] itself, and [headers]'s own `Cookie` (if
+      // any - `MediaInfo.requestHeaders`'s fallback for every extractor
+      // that has not adopted [cookiesByDomain] yet) must not simply ride
+      // along onto that new host unexamined.
+      if (cookiesByDomain != null) {
+        final scoped = CookieScope.headerFor(uri, cookiesByDomain);
+        if (scoped.isNotEmpty) request.headers.set('Cookie', scoped);
+      }
       if (start != null && end != null) {
         request.headers.set('Range', 'bytes=$start-$end');
       }

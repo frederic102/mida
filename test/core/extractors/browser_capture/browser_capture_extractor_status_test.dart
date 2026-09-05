@@ -30,6 +30,13 @@ class FakeDevtoolsSession implements DevtoolsSession {
   Future<Map<String, dynamic>> sendBrowserLevel(String method, [Map<String, dynamic>? params]) async => const {};
 
   @override
+  List<String> get childSessionIds => const [];
+
+  @override
+  Future<Map<String, dynamic>> sendToSession(String sessionId, String method, [Map<String, dynamic>? params]) =>
+      send(method, params);
+
+  @override
   Future<void> close() async {
     await _eventsController.close();
   }
@@ -44,6 +51,9 @@ BrowserCaptureExtractor _fastExtractor(FakeDevtoolsSession session) => BrowserCa
       loadTimeout: const Duration(milliseconds: 30),
       postLoadDelay: const Duration(milliseconds: 5),
       autoplayRetryDelay: const Duration(milliseconds: 5),
+      firstCandidateTimeout: const Duration(milliseconds: 20),
+      variantSettleDelay: const Duration(milliseconds: 5),
+      pollInterval: const Duration(milliseconds: 5),
     );
 
 void main() {
@@ -99,6 +109,43 @@ void main() {
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'LOGIN_REQUIRED')),
       );
     });
+
+    test('a "Prove your humanity" title with no media throws BOT_CHECK_REQUIRED (fast, no drive-capture wait)', () async {
+      final session = FakeDevtoolsSession(
+        onSend: (method, params) async {
+          if (method == 'Runtime.evaluate') {
+            final expression = params?['expression'] as String? ?? '';
+            if (expression.contains('querySelectorAll')) return _stringEvalResult('[]');
+            if (expression.contains('outerHTML')) return _stringEvalResult('<html><body>nothing</body></html>');
+            if (expression.contains('JSON.stringify')) {
+              return _stringEvalResult(jsonEncode({
+                'title': 'Reddit - Prove your humanity',
+                'ogTitle': null,
+                'ogImage': null,
+                'href': 'https://www.reddit.com/r/aww/comments/1c0xhqk/',
+              }));
+            }
+          }
+          return {};
+        },
+      );
+
+      // firstCandidateTimeout deliberately left at its (real, seconds-long)
+      // default: if the early-exit did not fire, this test would time out
+      // rather than merely being slow - proving BOT_CHECK_REQUIRED really
+      // is detected before _driveCapture's poll loop, not after it.
+      final extractor = BrowserCaptureExtractor(
+        sessionLauncher: ({connectTimeout = const Duration()}) async => session,
+        loadTimeout: const Duration(milliseconds: 30),
+        postLoadDelay: const Duration(milliseconds: 5),
+        autoplayRetryDelay: const Duration(milliseconds: 5),
+      );
+
+      await expectLater(
+        extractor.extract(Uri.parse('https://www.reddit.com/r/aww/comments/1c0xhqk/')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'BOT_CHECK_REQUIRED')),
+      );
+    }, timeout: const Timeout(Duration(seconds: 10)));
 
     test('a main-document 404 with no media throws NOT_FOUND', () async {
       late FakeDevtoolsSession session;

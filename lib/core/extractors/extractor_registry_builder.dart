@@ -1,8 +1,18 @@
+import 'bilibili/bilibili_extractor.dart';
 import 'browser_capture/browser_capture_extractor.dart';
+import 'chzzk/chzzk_extractor.dart';
+import 'dailymotion/dailymotion_extractor.dart';
+import 'douyin/douyin_extractor.dart';
 import 'generic/generic_extractor.dart';
 import 'instagram/instagram_extractor.dart';
+import 'kakao/kakao_extractor.dart';
 import 'media_extractor.dart';
+import 'naver/naver_extractor.dart';
+import 'niconico/niconico_extractor.dart';
+import 'reddit/reddit_extractor.dart';
+import 'soundcloud/soundcloud_extractor.dart';
 import 'tiktok/tiktok_extractor.dart';
+import 'twitch/twitch_extractor.dart';
 import 'twitter/twitter_extractor.dart';
 import 'youtube/youtube_extractor.dart';
 
@@ -34,6 +44,16 @@ ExtractorRegistry buildExtractorRegistry({bool useBrowserLoginSession = false}) 
       TwitterExtractor(),
       TikTokExtractor(),
       InstagramExtractor(),
+      NaverExtractor(),
+      ChzzkExtractor(),
+      KakaoExtractor(),
+      DailymotionExtractor(),
+      TwitchExtractor(),
+      RedditExtractor(),
+      SoundCloudExtractor(),
+      BilibiliExtractor(),
+      DouyinExtractor(),
+      NiconicoExtractor(),
       GenericExtractor(useBrowserLoginSession: useBrowserLoginSession),
     ],
     fallbacks: [BrowserCaptureExtractor(useBrowserLoginSession: useBrowserLoginSession)],

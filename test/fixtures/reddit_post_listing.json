@@ -1,0 +1,35 @@
+[
+  {
+    "kind": "Listing",
+    "data": {
+      "children": [
+        {
+          "kind": "t3",
+          "data": {
+            "id": "1c0xhqk",
+            "title": "My dog discovers snow for the first time",
+            "author": "example_user",
+            "thumbnail": "https://b.thumbs.redditmedia.com/EXAMPLE.jpg",
+            "is_video": true,
+            "secure_media": {
+              "reddit_video": {
+                "bitrate_kbps": 4500,
+                "fallback_url": "https://v.redd.it/abc123def456/DASH_720.mp4?source=fallback",
+                "height": 720,
+                "width": 1280,
+                "duration": 14,
+                "hls_url": "https://v.redd.it/abc123def456/HLSPlaylist.m3u8",
+                "dash_url": "https://v.redd.it/abc123def456/DASHPlaylist.mpd",
+                "is_gif": false
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "kind": "Listing",
+    "data": {"children": []}
+  }
+]

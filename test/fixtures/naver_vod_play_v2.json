@@ -1,0 +1,89 @@
+{
+ "meta": {
+  "masterVideoId": "D5305FD77CCF037973A0B9822D7AE024021C",
+  "contentId": "105228483",
+  "subject": "클로징"
+ },
+ "videos": {
+  "type": "video",
+  "hasPreview": "false",
+  "isPreview": false,
+  "canAutoPlay": true,
+  "isMultiTrack": false,
+  "dimension": "normal",
+  "list": [
+   {
+    "id": "09C20CE3B19BB55DA989231E17F531B10E29",
+    "useP2P": false,
+    "duration": 7.19,
+    "size": 376590,
+    "type": "avc1",
+    "encodingOption": {
+     "id": "270P_480_500_128",
+     "name": "270P",
+     "profile": "BASE",
+     "width": 480,
+     "height": 270,
+     "isEncodingComplete": "true",
+     "completeProgress": "100"
+    },
+    "bitrate": {
+     "video": 320.0,
+     "audio": 96.0
+    },
+    "p2pMetaUrl": "",
+    "p2pUrl": "",
+    "source": "https://b01-kr-naver-vod.pstatic.net/navertv/a/read/v2/VOD_ALPHA/navertv/D5305FD77CCF037973A0B9822D7AE024021C/pd/1788609068432/1591a530-a920-11f1-a526-48df377037c6.mp4?_lsu_sa_=65b54bf1213c66b685d415886c356eb79e1e35a84d08ff7b33f7d5c807d53155c12ffa626b054d08f00a35628a3a5b3f2e820ad1d20a44d27af4cf2d70e4ea71",
+    "sourceFrom": "GN"
+   },
+   {
+    "id": "58B60A1229A6AAFCECC9411AC09BA817D017",
+    "useP2P": false,
+    "duration": 7.19,
+    "size": 576008,
+    "type": "avc1",
+    "encodingOption": {
+     "id": "360P_640_650_96",
+     "name": "360P",
+     "profile": "BASE",
+     "width": 640,
+     "height": 360,
+     "isEncodingComplete": "true",
+     "completeProgress": "100"
+    },
+    "bitrate": {
+     "video": 543.0,
+     "audio": 96.0
+    },
+    "p2pMetaUrl": "",
+    "p2pUrl": "",
+    "source": "https://b01-kr-naver-vod.pstatic.net/navertv/a/read/v2/VOD_ALPHA/navertv/D5305FD77CCF037973A0B9822D7AE024021C/pd/1788609068432/15932bd3-a920-11f1-a526-48df377037c6.mp4?_lsu_sa_=6bd55afa71686f16d9d4b5026a753ab47ea430082f017f1d3cc7cbcae7563c655720ea9169e5bc0d50793ff2f634eb58113eaa1d940ca2789590e47f71dbd375588c2403277acf8b5a8b909be513cec1",
+    "sourceFrom": "GN"
+   },
+   {
+    "id": "4B4EF4EE628FAF75F233285572F2E8ADBC70",
+    "useP2P": false,
+    "duration": 7.19,
+    "size": 1224467,
+    "type": "avc1",
+    "encodingOption": {
+     "id": "720P_1280_2048_192_B",
+     "name": "720P",
+     "profile": "MAIN",
+     "width": 1280,
+     "height": 720,
+     "isEncodingComplete": "true",
+     "completeProgress": "100"
+    },
+    "bitrate": {
+     "video": 1172.0,
+     "audio": 192.0
+    },
+    "p2pMetaUrl": "",
+    "p2pUrl": "",
+    "source": "https://b01-kr-naver-vod.pstatic.net/navertv/a/read/v2/VOD_ALPHA/navertv/D5305FD77CCF037973A0B9822D7AE024021C/pd/1788609068432/15912fff-a920-11f1-a526-48df377037c6.mp4?_lsu_sa_=6d55fbf3e1e963e64dd9250666458bb48e7a37c834063f72342779c607f23a756324aa1d64d5850f10ba3d82763bfb0d45d694304c124ae300c89d8239f65d279c9090ac3507a1712cd49360701972cc",
+    "sourceFrom": "GN"
+   }
+  ]
+ }
+}

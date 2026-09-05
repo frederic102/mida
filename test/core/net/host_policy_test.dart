@@ -173,4 +173,75 @@ void main() {
     // redirect target received exactly 1 request and no exception was
     // thrown.
   });
+
+  group('HostPolicy.guardedRequest: DNS-rebinding guard', () {
+    test(
+      'a syntactically public hostname whose injected resolver answers with a loopback address is '
+      'rejected before any request is sent',
+      () async {
+        final client = HttpClient();
+        addTearDown(() => client.close(force: true));
+
+        var lookupCalls = 0;
+        Future<List<InternetAddress>> fakeResolve(String host) async {
+          lookupCalls++;
+          expect(host, 'looks-public.example.test');
+          return [InternetAddress('127.0.0.1')];
+        }
+
+        await expectLater(
+          HostPolicy.guardedRequest(
+            client,
+            Uri.parse('http://looks-public.example.test/video.mp4'),
+            useHead: false,
+            resolveHost: fakeResolve,
+          ),
+          throwsA(
+            isA<MediaExtractionException>()
+                .having((e) => e.status, 'status', 'UNSUPPORTED_URL')
+                .having((e) => e.reason, 'reason', contains('127.0.0.1')),
+          ),
+        );
+        expect(lookupCalls, 1);
+      },
+    );
+
+    test('a literal-IP target never invokes resolveHost at all (isDisallowedHost already covers it)', () async {
+      var lookupCalls = 0;
+      Future<List<InternetAddress>> shouldNeverRun(String host) async {
+        lookupCalls++;
+        throw const SocketException('resolveHost must not be called for a literal IP host');
+      }
+
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        request.response.write('ok');
+        await request.response.close();
+      });
+
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+
+      final response = await HostPolicy.guardedRequest(
+        client,
+        Uri.parse('http://127.0.0.1:${server.port}/ok'),
+        useHead: false,
+        allowPrivateHosts: true,
+        resolveHost: shouldNeverRun,
+      );
+      expect(response.statusCode, 200);
+      expect(lookupCalls, 0);
+    });
+
+    // Guard-can-fail evidence (verified, see report): temporarily making
+    // `_assertResolvesToPublicHost` a no-op (as if the DNS-rebinding check
+    // did not exist, i.e. the pre-fix behavior) made the first test above
+    // fail: `guardedRequest` proceeded straight to `client.getUrl(...)`,
+    // which - because `looks-public.example.test` is not a real domain in
+    // this sandbox - threw a bare `SocketException` instead of the
+    // expected `MediaExtractionException(UNSUPPORTED_URL)`, and
+    // `lookupCalls` stayed 0 instead of 1. Reverted immediately after
+    // confirming the failure.
+  });
 }

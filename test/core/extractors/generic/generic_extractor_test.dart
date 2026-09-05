@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/generic/generic_extractor.dart';
 import 'package:mida/core/extractors/media_models.dart';
-import 'package:mida/core/services/browser_page_fetcher.dart';
 
 import 'generic_test_support.dart';
 
@@ -66,35 +65,24 @@ void main() {
       expect(info.formats.single.url, server.urlFor('/media/demo.mp4').toString());
     });
 
-    test('step 2: falls back to the headless browser when plain HTML has no media, then sniffs the DOM', () async {
-      server.body = '<html><body><div id="app"></div></body></html>'; // JS-only shell, nothing to sniff
-      final workDir = await Directory.systemTemp.createTemp('mida_generic_browser_');
-      addTearDown(() => workDir.deleteSync(recursive: true));
-      final bat = writeFakeBrowser(
-        workDir,
-        '^<html^>^<video src="https://cdn.example.com/rendered.mp4"^>^</video^>^</html^>',
-      );
+    test(
+      'step 2 (no headless browser step anymore): a JS-only shell with nothing to sniff and no embed '
+      'candidates raises NO_MEDIA_FOUND directly, without needing any browser argument wired up '
+      '(security/architecture follow-up: rendering is the browser-capture fallback tier\'s job now)',
+      () async {
+        server.body = '<html><body><div id="app"></div></body></html>'; // JS-only shell, nothing to sniff
+        final extractor = GenericExtractor(allowPrivateHosts: true);
 
-      final extractor = GenericExtractor(
-        browserFetcher: BrowserPageFetcher(candidatePaths: () => [bat.path], allowPrivateHosts: true),
-        allowPrivateHosts: true,
-      );
-      final info = await extractor.extract(server.urlFor('/js-only'));
+        await expectLater(
+          extractor.extract(server.urlFor('/js-only')),
+          throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NO_MEDIA_FOUND')),
+        );
+      },
+    );
 
-      expect(info.formats, hasLength(1));
-      expect(info.formats.single.url, 'https://cdn.example.com/rendered.mp4');
-    });
-
-    test('step 3: DRM markers with no media anywhere raise DRM_PROTECTED', () async {
+    test('step 2: DRM markers with no media anywhere raise DRM_PROTECTED', () async {
       server.body = '<html><body>Protected by Widevine DRM.</body></html>';
-      final workDir = await Directory.systemTemp.createTemp('mida_generic_browser_');
-      addTearDown(() => workDir.deleteSync(recursive: true));
-      final bat = writeFakeBrowser(workDir, '^<html^>still nothing^</html^>');
-
-      final extractor = GenericExtractor(
-        browserFetcher: BrowserPageFetcher(candidatePaths: () => [bat.path], allowPrivateHosts: true),
-        allowPrivateHosts: true,
-      );
+      final extractor = GenericExtractor(allowPrivateHosts: true);
 
       await expectLater(
         extractor.extract(server.urlFor('/movie')),
@@ -102,22 +90,51 @@ void main() {
       );
     });
 
-    test('step 3: no media and no DRM markers raise NO_MEDIA_FOUND', () async {
+    test('step 2: no media and no DRM markers raise NO_MEDIA_FOUND', () async {
       server.body = '<html><body>Just an article, nothing to see.</body></html>';
-      final workDir = await Directory.systemTemp.createTemp('mida_generic_browser_');
-      addTearDown(() => workDir.deleteSync(recursive: true));
-      final bat = writeFakeBrowser(workDir, '^<html^>still nothing^</html^>');
-
-      final extractor = GenericExtractor(
-        browserFetcher: BrowserPageFetcher(candidatePaths: () => [bat.path], allowPrivateHosts: true),
-        allowPrivateHosts: true,
-      );
+      final extractor = GenericExtractor(allowPrivateHosts: true);
 
       await expectLater(
         extractor.extract(server.urlFor('/article')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NO_MEDIA_FOUND')),
       );
     });
+
+    test(
+      'false-positive guard end to end: a real <video src> and a bare ad/tracker .mp4 URL (raw-text-only, no '
+      'player context) both get sniffed, but only the real one survives into the final formats - the ad URL '
+      'fails its reachability probe against a local fake ad server',
+      () async {
+        final adServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => adServer.close(force: true));
+        adServer.listen((request) async {
+          request.response.headers.set('Content-Type', 'text/html');
+          if (request.method != 'HEAD') request.response.write('not video');
+          await request.response.close();
+        });
+        final adUrl = 'http://127.0.0.1:${adServer.port}/creative.mp4';
+
+        server.body = '''
+          <html><body>
+            <video src="/media/real.mp4"></video>
+            <script>var trackerBeacon = "$adUrl";</script>
+          </body></html>
+        ''';
+
+        final extractor = GenericExtractor(allowPrivateHosts: true);
+        final info = await extractor.extract(server.urlFor('/post'));
+
+        expect(info.formats, hasLength(1));
+        expect(info.formats.single.url, server.urlFor('/media/real.mp4').toString());
+        expect(info.formats.any((f) => f.url == adUrl), isFalse);
+      },
+    );
+
+    // Guard-can-fail evidence (verified, see report): temporarily making
+    // `_rankAndFilterCandidates` return every candidate unfiltered (as if
+    // the false-positive guard did not exist) made the test above fail:
+    // `info.formats` came back with 2 entries instead of 1, including the
+    // ad server's URL. Reverted immediately after confirming the failure.
 
     test('HLS master playlist found in HTML is expanded into one format per variant', () async {
       const playlist = '''
@@ -215,10 +232,114 @@ high/index.m3u8
       // `IframeFollower.findEmbedCandidates` always return `const []`
       // (simulating "iframe following disabled") made this test fail:
       // `info.formats` was empty and `GenericExtractor.extract` instead
-      // fell through to the headless-browser step (which then throws
-      // BROWSER_MISSING/NO_MEDIA_FOUND in this hermetic test, since no
-      // real browser argument is wired up here), proving this test only
-      // passes because the iframe-follow step actually runs.
+      // raised `NO_MEDIA_FOUND` directly (no browser fallback step exists
+      // in this extractor anymore - see the class doc), proving this test
+      // only passes because the iframe-follow step actually runs.
+
+      test(
+        'network budget (security follow-up): oEmbed is never fetched when a direct <iframe> candidate '
+        'already yields media',
+        () async {
+          var oembedRequests = 0;
+          final embedServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          addTearDown(() => embedServer.close(force: true));
+          embedServer.listen((request) async {
+            request.response.headers.set('Content-Type', 'text/html; charset=utf-8');
+            request.response.write('<video src="/clip.mp4"></video>');
+            await request.response.close();
+          });
+          final oembedServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          addTearDown(() => oembedServer.close(force: true));
+          oembedServer.listen((request) async {
+            oembedRequests++;
+            request.response.headers.set('Content-Type', 'application/json');
+            request.response.write('{"html":"<iframe src=\\"http://127.0.0.1:9/never\\"></iframe>"}');
+            await request.response.close();
+          });
+
+          server.body = '''
+            <html><head>
+              <link rel="alternate" type="application/json+oembed" href="http://127.0.0.1:${oembedServer.port}/oembed">
+            </head><body><iframe src="http://127.0.0.1:${embedServer.port}/embed"></iframe></body></html>
+          ''';
+
+          final extractor = GenericExtractor(allowPrivateHosts: true);
+          final info = await extractor.extract(server.urlFor('/direct-wins'));
+
+          expect(info.formats, hasLength(1));
+          expect(oembedRequests, 0, reason: 'oEmbed discovery must only be tried after direct candidates yield nothing');
+        },
+      );
+
+      test(
+        'network budget (security follow-up): the shared 6-fetch budget across iframe candidates and oEmbed '
+        'stops the oEmbed-derived iframe from ever being fetched once exhausted',
+        () async {
+          var embedRequests = 0;
+          final embedServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          addTearDown(() => embedServer.close(force: true));
+          embedServer.listen((request) async {
+            embedRequests++;
+            request.response.headers.set('Content-Type', 'text/html; charset=utf-8');
+            request.response.write('<html><body>no media here</body></html>');
+            await request.response.close();
+          });
+
+          var oembedJsonRequests = 0;
+          var neverReachedRequests = 0;
+          final neverReachedServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          addTearDown(() => neverReachedServer.close(force: true));
+          neverReachedServer.listen((request) async {
+            neverReachedRequests++;
+            request.response.write('<html><body>should never be reached</body></html>');
+            await request.response.close();
+          });
+          final oembedServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          addTearDown(() => oembedServer.close(force: true));
+          oembedServer.listen((request) async {
+            oembedJsonRequests++;
+            request.response.headers.set('Content-Type', 'application/json');
+            request.response.write(
+              '{"html":"<iframe src=\\"http://127.0.0.1:${neverReachedServer.port}/late\\"></iframe>"}',
+            );
+            await request.response.close();
+          });
+
+          // IframeFollower.maxCandidates is 5, so all 5 of these are found
+          // (and all fail to sniff, forcing the fallback to oEmbed).
+          final iframeTags = [
+            for (var i = 0; i < 5; i++) '<iframe src="http://127.0.0.1:${embedServer.port}/iframe$i"></iframe>',
+          ].join();
+          server.body = '''
+            <html><head>
+              <link rel="alternate" type="application/json+oembed" href="http://127.0.0.1:${oembedServer.port}/oembed">
+            </head><body>$iframeTags</body></html>
+          ''';
+
+          final extractor = GenericExtractor(allowPrivateHosts: true);
+          await expectLater(
+            extractor.extract(server.urlFor('/budget-exhausted')),
+            throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NO_MEDIA_FOUND')),
+          );
+
+          expect(embedRequests, 5, reason: 'all 5 iframe candidates are tried before falling back to oEmbed');
+          expect(oembedJsonRequests, 1, reason: 'oEmbed is tried once the 5 direct candidates all fail');
+          expect(
+            neverReachedRequests,
+            0,
+            reason: 'the 6-fetch shared budget (5 iframes + 1 oEmbed JSON) is exhausted before the '
+                'oEmbed-derived iframe would be the 7th fetch',
+          );
+        },
+      );
+
+      // Guard-can-fail evidence (verified, see report): temporarily
+      // constructing `NetworkBudget` with `maxFetches: 100` in
+      // `GenericExtractor._followEmbeds` (simulating "no shared budget")
+      // made the test above fail: `neverReachedRequests` came back `1`
+      // instead of `0`, since nothing stopped the oEmbed-derived iframe
+      // from being fetched too. Reverted immediately after confirming the
+      // failure.
     });
 
   });

@@ -56,6 +56,40 @@ void main() {
       expect(signal, isNull);
     });
 
+    test('Reddit\'s own "Prove your humanity" title is botCheckRequired', () {
+      // Live-observed (docs/plan-phase5-coverage.md diagnostic run,
+      // 2026-09-05): this exact title, no login-shaped URL involved.
+      final signal = PageStatusDetector.detect(
+        finalUrl: Uri.parse('https://www.reddit.com/r/aww/comments/1c0xhqk/'),
+        title: 'Reddit - Prove your humanity',
+      );
+      expect(signal, PageStatusSignal.botCheckRequired);
+    });
+
+    test('Cloudflare\'s generic challenge title ("Just a moment...") is botCheckRequired', () {
+      final signal = PageStatusDetector.detect(
+        finalUrl: Uri.parse('https://example.com/video'),
+        title: 'Just a moment...',
+      );
+      expect(signal, PageStatusSignal.botCheckRequired);
+    });
+
+    test('Cloudflare\'s hard-block title ("Attention Required!") is botCheckRequired', () {
+      final signal = PageStatusDetector.detect(
+        finalUrl: Uri.parse('https://example.com/video'),
+        title: 'Attention Required! | Cloudflare',
+      );
+      expect(signal, PageStatusSignal.botCheckRequired);
+    });
+
+    test('a login-shaped title still wins over a bot-check phrase when both could apply', () {
+      final signal = PageStatusDetector.detect(
+        finalUrl: Uri.parse('https://example.com/accounts/login/'),
+        title: 'Log in - prove your humanity next',
+      );
+      expect(signal, PageStatusSignal.loginRequired);
+    });
+
     test('guard can fail: a title that merely contains "login" as part of another word is not flagged', () {
       // "login" inside "loginwall" should not match \b(log ?in|sign ?in)\b
       // (a word-boundary check) - proves the pattern is not a naive

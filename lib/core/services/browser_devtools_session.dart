@@ -4,8 +4,13 @@ import 'dart:io';
 
 import '../extractors/media_models.dart';
 import 'browser_executable_locator.dart';
+import 'browser_launch_args.dart';
+import 'browser_launch_resources.dart';
+import 'browser_process_tree.dart';
 import 'browser_profile.dart';
+import 'browser_temp_cleanup.dart';
 import 'cdp_client.dart';
+import 'interactive_session_detector.dart';
 
 /// The surface `BrowserCaptureExtractor` needs from a live DevTools
 /// session. Extracted as an interface so tests can substitute a fake
@@ -24,11 +29,26 @@ abstract class DevtoolsSession {
   /// any one attached target).
   Future<Map<String, dynamic>> sendBrowserLevel(String method, [Map<String, dynamic>? params]);
 
+  /// Every child target's session id auto-attached so far (a cross-origin
+  /// `<iframe>` running its own render process under Chrome's site
+  /// isolation), excluding the top-level target's own session - see
+  /// [PlaybackTrigger] for why a caller needs to reach these directly
+  /// rather than only ever driving the top-level document.
+  List<String> get childSessionIds;
+
+  /// Sends [method] scoped to one specific attached session - [sessionId]
+  /// may be the top-level target's own session or one of
+  /// [childSessionIds] - so a playback trigger can run inside an iframe
+  /// exactly as it would on the top-level page.
+  Future<Map<String, dynamic>> sendToSession(String sessionId, String method, [Map<String, dynamic>? params]);
+
   Future<void> close();
 }
 
-/// Drives a headless system browser (Edge/Chrome) over the Chrome DevTools
-/// Protocol. Spec: `docs/plan-browser-capture.md`. Launches its own
+/// Drives a system browser (Edge/Chrome) over the Chrome DevTools Protocol -
+/// headed by default, off-screen (see [BrowserLaunchArgs]), headless only as
+/// a fallback if a headed launch fails outright. Spec:
+/// `docs/plan-browser-capture.md`. Launches its own
 /// throwaway profile directory and picks a free debugging port per call so
 /// concurrent captures never collide; both are always cleaned up, whether
 /// launch succeeds, fails partway through, or a caller-driven capture later
@@ -52,53 +72,45 @@ class BrowserDevtoolsSession implements DevtoolsSession {
   /// its `Network.responseReceived` events are invisible to a session
   /// only attached to the top-level `vimeo.com` target).
   final Set<String> _attachedSessionIds;
+
+  /// [_attachedSessionIds] minus the top-level target's own [_sessionId] -
+  /// see [childSessionIds].
+  final Set<String> _childSessionIds = {};
   StreamSubscription<CdpEvent>? _autoAttachSubscription;
 
   BrowserDevtoolsSession._(this._process, this._profileDir, this._cdp, this._sessionId, this.targetId)
       : _attachedSessionIds = {_sessionId};
 
-  static Future<int> _reserveFreePort() async {
-    final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-    final port = probe.port;
-    await probe.close();
-    return port;
-  }
 
-  /// A fresh empty temp dir, unless [useBrowserLoginSession] is on and
-  /// staging [executable]'s real profile (see [BrowserProfile]) succeeds -
-  /// staging failure (unknown browser kind, no profile present, copy
-  /// error) falls back to the same empty temp dir as when the toggle is
-  /// off, never throws. Same fallback shape as
-  /// `BrowserPageFetcher._resolveProfileDir`.
-  static Future<Directory> _resolveProfileDir(
-    String executable, {
-    required bool useBrowserLoginSession,
-    Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
-  }) async {
-    if (useBrowserLoginSession) {
-      final kind = BrowserProfile.kindForExecutable(executable);
-      if (kind != null) {
-        final stage = stageProfileDir ?? BrowserProfile.stageCopy;
-        final staged = await stage(kind);
-        if (staged != null) return staged;
-      }
-    }
-    return Directory.systemTemp.createTempSync('mida_cdp_');
-  }
-
-  /// Launches a fresh headless browser instance and attaches to a new
-  /// `about:blank` target, with `Network`/`Page`/`Runtime` already enabled
-  /// on it. Throws [MediaExtractionException] (`BROWSER_MISSING` when no
-  /// candidate executable exists, message lists everything checked;
-  /// `NETWORK` if the DevTools endpoint never comes up within
-  /// [connectTimeout] or the CDP handshake fails), always killing the
-  /// process and deleting the profile directory first.
+  /// Launches a fresh browser instance and attaches to a new `about:blank`
+  /// target, with `Network`/`Page`/`Runtime` already enabled on it. Throws
+  /// [MediaExtractionException] (`BROWSER_MISSING` when no candidate
+  /// executable exists, message lists everything checked; `NETWORK` if the
+  /// DevTools endpoint never comes up within [connectTimeout] or the CDP
+  /// handshake fails), always killing the process and deleting the profile
+  /// directory first.
+  ///
+  /// Tries a headed (visible, off-screen-positioned) launch first, falling
+  /// back to `--headless=new` if that attempt itself fails to come up at
+  /// all, or is skipped upfront when [preferHeaded] is false or this
+  /// process has no interactive desktop session at all (see
+  /// [InteractiveSessionDetector]) - see [BrowserLaunchArgs] for why headed
+  /// is the default otherwise. This is strictly about whether the
+  /// *browser process and CDP session* come up; it has nothing to do with
+  /// whether a given page later turns out to have media (a caller
+  /// noticing the page itself never loaded under a headed session is
+  /// `BrowserCaptureExtractor`'s own whole-capture retry, one layer up).
   static Future<BrowserDevtoolsSession> launch({
     List<String> Function()? candidatePaths,
     Duration connectTimeout = const Duration(seconds: 10),
     bool useBrowserLoginSession = false,
+    bool preferHeaded = true,
     Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
   }) async {
+    // Fire-and-forget: a slow/locked temp dir must never add latency to
+    // this capture's own launch.
+    unawaited(BrowserTempCleanup.sweepStale());
+
     final lookup = await BrowserExecutableLocator.find(fixedCandidatePaths: candidatePaths);
     final executable = lookup.path;
     if (executable == null) {
@@ -109,30 +121,54 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       );
     }
 
-    final port = await _reserveFreePort();
-    final profileDir = await _resolveProfileDir(
+    if (!preferHeaded || !InteractiveSessionDetector.hasInteractiveSession()) {
+      return _launchAttempt(
+        executable,
+        headed: false,
+        connectTimeout: connectTimeout,
+        useBrowserLoginSession: useBrowserLoginSession,
+        stageProfileDir: stageProfileDir,
+      );
+    }
+
+    try {
+      return await _launchAttempt(
+        executable,
+        headed: true,
+        connectTimeout: connectTimeout,
+        useBrowserLoginSession: useBrowserLoginSession,
+        stageProfileDir: stageProfileDir,
+      );
+    } catch (_) {
+      return await _launchAttempt(
+        executable,
+        headed: false,
+        connectTimeout: connectTimeout,
+        useBrowserLoginSession: useBrowserLoginSession,
+        stageProfileDir: stageProfileDir,
+      );
+    }
+  }
+
+  static Future<BrowserDevtoolsSession> _launchAttempt(
+    String executable, {
+    required bool headed,
+    required Duration connectTimeout,
+    required bool useBrowserLoginSession,
+    required Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
+  }) async {
+    final port = await BrowserLaunchResources.reserveFreePort();
+    final profileDir = await BrowserLaunchResources.resolveProfileDir(
       executable,
       useBrowserLoginSession: useBrowserLoginSession,
       stageProfileDir: stageProfileDir,
     );
     Process? process;
     try {
-      process = await Process.start(executable, [
-        '--headless=new',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--user-data-dir=${profileDir.path}',
-        '--remote-debugging-port=$port',
-        // Without this, some Chrome/Edge builds bind the DevTools port to
-        // every interface rather than just loopback, briefly exposing an
-        // unauthenticated remote-control endpoint to the local network
-        // for as long as the browser process runs.
-        '--remote-debugging-address=127.0.0.1',
-        '--mute-audio',
-        '--autoplay-policy=no-user-gesture-required',
-        'about:blank',
-      ]);
+      process = await Process.start(
+        executable,
+        BrowserLaunchArgs.build(headed: headed, profileDirPath: profileDir.path, port: port),
+      );
       // `drain<void>()`, not `drain<List<int>>()`: with no explicit
       // futureValue argument, `Stream.drain` casts `null` to its type
       // parameter, and `null as List<int>` throws synchronously (`void`
@@ -151,19 +187,30 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       // (observed leaking a `mida_cdp_*` dir on Windows roughly 1 run in
       // 4 without this).
       if (process != null) await killAndAwaitExit(process);
-      await _deleteProfileQuietly(profileDir);
-      if (e is MediaExtractionException) rethrow;
-      throw MediaExtractionException('NETWORK', 'Failed to start a browser DevTools session: $e');
+      final cleanedUp = await BrowserTempCleanup.deleteQuietly(profileDir);
+      final cleanupNote =
+          cleanedUp ? '' : ' A temporary browser profile folder could not be removed and may remain in your system temp directory.';
+      if (e is MediaExtractionException) {
+        throw MediaExtractionException(e.status, '${e.reason ?? ''}$cleanupNote');
+      }
+      throw MediaExtractionException('NETWORK', 'Failed to start a browser DevTools session: $e$cleanupNote');
     }
   }
 
   /// Kills [process] and waits for it to actually exit (escalating to
   /// `SIGKILL` and waiting again, briefly, if it does not exit within
-  /// [timeout]) before returning. Exposed (not private) so tests can drive
-  /// it directly against a fake `Process` without needing a real OS
-  /// process; production code only reaches it via [launch]'s failure path
-  /// and [close].
-  static Future<void> killAndAwaitExit(Process process, {Duration timeout = const Duration(seconds: 5)}) async {
+  /// [timeout]) before returning, then sweeps [BrowserProcessTree] over its
+  /// pid (a Windows child renderer/GPU process does not die with its
+  /// parent on its own - see that class). Exposed (not private) so tests
+  /// can drive it directly against a fake `Process` without needing a real
+  /// OS process; production code only reaches it via [launch]'s failure
+  /// path and [close]. [processTreeKiller] is a test-only override for
+  /// [BrowserProcessTree.kill]'s own `runner` (never set in production).
+  static Future<void> killAndAwaitExit(
+    Process process, {
+    Duration timeout = const Duration(seconds: 5),
+    Future<ProcessResult> Function(String executable, List<String> arguments)? processTreeKiller,
+  }) async {
     try {
       process.kill();
       await process.exitCode.timeout(
@@ -181,6 +228,7 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       // Best-effort: if even querying exitCode throws, there is nothing
       // further to synchronize on before the caller attempts its delete.
     }
+    await BrowserProcessTree.kill(process.pid, runner: processTreeKiller);
   }
 
   /// Does the target-attach + domain-enable + child-target auto-attach
@@ -224,6 +272,10 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     await session.send('Network.enable');
     await session.send('Page.enable');
     await session.send('Runtime.enable');
+    // Lane A hardening: pauses every request this target makes so
+    // PrivateDestinationGuard can fail one bound for a disallowed host
+    // before it ever leaves the machine - see that file's own docstring.
+    await session.send('Fetch.enable', _fetchEnableParams);
 
     // Must be wired before `Target.setAutoAttach` is requested: Chrome can
     // fire `Target.attachedToTarget` for an already-loading child target
@@ -248,9 +300,11 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     if (event.method != 'Target.attachedToTarget') return;
     final childSessionId = event.params['sessionId'] as String?;
     if (childSessionId == null || !_attachedSessionIds.add(childSessionId)) return;
+    _childSessionIds.add(childSessionId);
     unawaited(() async {
       try {
         await _cdp.send('Network.enable', sessionId: childSessionId);
+        await _cdp.send('Fetch.enable', params: _fetchEnableParams, sessionId: childSessionId);
       } catch (_) {
         // A child target that closes before we finish enabling Network on
         // it just never contributes events; that is not a capture failure
@@ -259,6 +313,12 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       }
     }());
   }
+
+  static const Map<String, dynamic> _fetchEnableParams = {
+    'patterns': [
+      {'urlPattern': '*'}
+    ],
+  };
 
   static Future<String> _pollForWebSocketUrl(int port, Duration timeout) async {
     final deadline = DateTime.now().add(timeout);
@@ -281,26 +341,8 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     }
     throw const MediaExtractionException(
       'NETWORK',
-      'Timed out waiting for the headless browser DevTools endpoint to come up.',
+      'Timed out waiting for the browser DevTools endpoint to come up.',
     );
-  }
-
-  static Future<void> _deleteProfileQuietly(Directory dir) async {
-    try {
-      if (dir.existsSync()) dir.deleteSync(recursive: true);
-      return;
-    } catch (_) {
-      // A just-killed browser process's profile files can stay briefly
-      // locked (Windows file-handle release, antivirus scan); one short
-      // retry clears most of these instead of leaking the directory.
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    try {
-      if (dir.existsSync()) dir.deleteSync(recursive: true);
-    } catch (_) {
-      // Still locked; leave it - best-effort cleanup must never mask
-      // whatever error or result the caller already has.
-    }
   }
 
   @override
@@ -314,6 +356,13 @@ class BrowserDevtoolsSession implements DevtoolsSession {
   @override
   Future<Map<String, dynamic>> sendBrowserLevel(String method, [Map<String, dynamic>? params]) =>
       _cdp.send(method, params: params);
+
+  @override
+  List<String> get childSessionIds => _childSessionIds.toList(growable: false);
+
+  @override
+  Future<Map<String, dynamic>> sendToSession(String sessionId, String method, [Map<String, dynamic>? params]) =>
+      _cdp.send(method, params: params, sessionId: sessionId);
 
   @override
   Future<void> close() async {
@@ -330,6 +379,6 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       await _cdp.close();
     } catch (_) {}
     await killAndAwaitExit(_process);
-    await _deleteProfileQuietly(_profileDir);
+    await BrowserTempCleanup.deleteQuietly(_profileDir);
   }
 }

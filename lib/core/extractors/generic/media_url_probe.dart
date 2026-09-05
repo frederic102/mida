@@ -95,4 +95,92 @@ class MediaUrlProbe {
       },
     );
   }
+
+  /// Content-Type prefixes/values [isPlausibleMediaCandidate] treats as a
+  /// real manifest: legitimately small text, so exempt from the byte-size
+  /// floor below (unlike an actual media file).
+  static const Set<String> _manifestContentTypes = {
+    'application/vnd.apple.mpegurl',
+    'application/x-mpegurl',
+    'application/dash+xml',
+  };
+
+  /// Minimum size (bytes) a non-manifest response must advertise to be
+  /// trusted as real media by [isPlausibleMediaCandidate], rather than a
+  /// small ad creative, tracker beacon, or preview clip a bare
+  /// URL-shaped string happened to point at.
+  static const int _minPlausibleBytes = 200 * 1024;
+
+  /// Cheap reachability probe for a candidate URL that carried no
+  /// player-ish context of its own (see `SniffedMedia.contextBacked` /
+  /// `JsonMediaCandidate.contextBacked` - security follow-up: false
+  /// positives). HEAD first, falling back to a `Range: bytes=0-0` GET when
+  /// the server rejects HEAD (some CDNs do, but still honor Range).
+  ///
+  /// Passes only when the Content-Type is a recognized media/manifest type
+  /// AND (it is a manifest type, which is legitimately small, OR the
+  /// resource's total size exceeds [_minPlausibleBytes]). Any network
+  /// failure, non-2xx/206 status, or unrecognized Content-Type fails the
+  /// probe (fail-closed: an unverifiable bare-URL-shaped string is exactly
+  /// the case this exists to reject).
+  Future<bool> isPlausibleMediaCandidate(Uri url) async {
+    final client = _httpClientFactory();
+    try {
+      var response = await _send(client, url, useHead: true);
+      if (response.statusCode >= 400) {
+        await response.drain<void>();
+        response = await _sendRangeProbe(client, url);
+      }
+      if (response.statusCode >= 400) {
+        await response.drain<void>();
+        return false;
+      }
+      final contentType = response.headers.contentType?.mimeType.toLowerCase();
+      final totalSize = _totalSize(response);
+      await response.drain<void>();
+      if (contentType == null) return false;
+      final isManifest = _manifestContentTypes.contains(contentType);
+      final isMedia = isManifest || contentType.startsWith('video/') || contentType.startsWith('audio/');
+      if (!isMedia) return false;
+      if (isManifest) return true;
+      return totalSize != null && totalSize > _minPlausibleBytes;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<HttpClientResponse> _sendRangeProbe(HttpClient client, Uri url) {
+    return HostPolicy.guardedRequest(
+      client,
+      url,
+      useHead: false,
+      allowPrivateHosts: allowPrivateHosts,
+      configureRequest: (request) {
+        request.headers.set('User-Agent', genericDesktopUserAgent);
+        request.headers.set('Accept-Language', genericAcceptLanguage);
+        request.headers.set('Range', 'bytes=0-0');
+      },
+    );
+  }
+
+  /// The resource's *total* size, whether [response] came from a HEAD
+  /// (whose own `Content-Length` already is the total) or a partial
+  /// `Range: bytes=0-0` GET (whose `Content-Length` is just `1`, the size
+  /// of the one byte returned - the total instead sits in
+  /// `Content-Range: bytes 0-0/<total>`, or is unknowable if the server
+  /// ignored the Range request and sent a `*` total).
+  int? _totalSize(HttpClientResponse response) {
+    final contentRange = response.headers.value('content-range');
+    if (contentRange != null) {
+      final slashIndex = contentRange.lastIndexOf('/');
+      if (slashIndex != -1) {
+        final totalText = contentRange.substring(slashIndex + 1).trim();
+        if (totalText != '*') return int.tryParse(totalText);
+      }
+    }
+    final contentLength = response.contentLength;
+    return contentLength >= 0 ? contentLength : null;
+  }
 }

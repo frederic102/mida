@@ -31,15 +31,3 @@ class FakePageServer {
 
   Future<void> close() => server.close(force: true);
 }
-
-/// Writes a fake "browser" executable (a `.bat` that echoes fixed HTML,
-/// matching the plan's own test guidance) and returns its path. Windows
-/// can run a `.bat` directly via `Process.start` without a shell (proven
-/// against this checkout before writing the first test that used this),
-/// which keeps the production code's "argument lists only, no shell"
-/// rule intact even in the fake.
-File writeFakeBrowser(Directory dir, String htmlLines) {
-  final file = File('${dir.path}/echo_browser.bat');
-  file.writeAsStringSync(['@echo off', 'echo $htmlLines'].join('\r\n'));
-  return file;
-}

@@ -30,6 +30,13 @@ class FakeDevtoolsSession implements DevtoolsSession {
   Future<Map<String, dynamic>> sendBrowserLevel(String method, [Map<String, dynamic>? params]) async => const {};
 
   @override
+  List<String> get childSessionIds => const [];
+
+  @override
+  Future<Map<String, dynamic>> sendToSession(String sessionId, String method, [Map<String, dynamic>? params]) =>
+      send(method, params);
+
+  @override
   Future<void> close() async {
     closed = true;
     await _eventsController.close();
@@ -62,6 +69,9 @@ BrowserCaptureExtractor _fastExtractor(FakeDevtoolsSession session) => BrowserCa
       loadTimeout: const Duration(milliseconds: 30),
       postLoadDelay: const Duration(milliseconds: 5),
       autoplayRetryDelay: const Duration(milliseconds: 5),
+      firstCandidateTimeout: const Duration(milliseconds: 20),
+      variantSettleDelay: const Duration(milliseconds: 5),
+      pollInterval: const Duration(milliseconds: 5),
     );
 
 void main() {

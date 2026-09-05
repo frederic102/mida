@@ -75,6 +75,28 @@ class MediaFormat {
       'audio: $audioCodec, ${width}x$height, bitrate: $bitrate, protocol: $protocol)';
 }
 
+/// One cookie captured from a live browser session, scoped precisely
+/// enough (domain + path + secure) that a downloader can decide per
+/// request whether it actually applies - see `CookieScope`. Always sourced
+/// from CDP's own `Network.getCookies` (which reports all three), never
+/// built by hand from a raw `document.cookie` string (that loses
+/// domain/path/secure entirely).
+class CookieEntry {
+  final String domain;
+  final String path;
+  final bool secure;
+  final String name;
+  final String value;
+
+  const CookieEntry({
+    required this.domain,
+    required this.path,
+    required this.secure,
+    required this.name,
+    required this.value,
+  });
+}
+
 /// A single caption/subtitle track offered by the source.
 class CaptionTrack {
   final String languageCode;
@@ -112,6 +134,17 @@ class MediaInfo {
   /// signed stream URLs to the requesting client).
   final Map<String, String> requestHeaders;
 
+  /// Cookies scoped to the exact domain they were captured for, keyed by
+  /// that domain - lets a downloader send only the cookies that actually
+  /// apply to a given format's own host (see `CookieScope`), rather than
+  /// every cookie the page's own session carried flattened into one
+  /// [requestHeaders] `Cookie` entry (sending format B's cookies to format
+  /// A's host leaks them to whichever CDN happens to be involved). Empty
+  /// for every extractor except `BrowserCaptureExtractor`; a downloader
+  /// falls back to [requestHeaders]'s own `Cookie` entry, if any, when
+  /// this has no match for a given request's host.
+  final Map<String, List<CookieEntry>> cookiesByDomain;
+
   const MediaInfo({
     required this.id,
     required this.title,
@@ -123,6 +156,7 @@ class MediaInfo {
     this.translatableLanguageCodes = const [],
     required this.sourceUrl,
     this.requestHeaders = const {},
+    this.cookiesByDomain = const {},
   });
 }
 
