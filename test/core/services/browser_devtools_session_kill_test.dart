@@ -46,7 +46,17 @@ void main() {
       final process = _ControllableFakeProcess();
       var finished = false;
 
-      final future = BrowserDevtoolsSession.killAndAwaitExit(process).then((_) => finished = true);
+      // A no-op fake processTreeKiller: killAndAwaitExit now runs the
+      // tree-kill *before* the parent's own kill/wait (independent review
+      // round 2 - taskkill/pkill need a still-live tree to act on), so
+      // without this override this test would spawn a real OS process
+      // trying to tree-kill fake pid 1, adding real (if usually brief)
+      // wall-clock latency ahead of the `process.kill()` this test's own
+      // timing assertions are about.
+      final future = BrowserDevtoolsSession.killAndAwaitExit(
+        process,
+        processTreeKiller: (executable, arguments) async => ProcessResult(0, 0, '', ''),
+      ).then((_) => finished = true);
 
       // The process has been asked to terminate but has not "exited" yet;
       // killAndAwaitExit must still be waiting.
@@ -68,7 +78,11 @@ void main() {
     test('escalates to SIGKILL and waits again when exitCode never resolves within the timeout', () async {
       final process = _ControllableFakeProcess(); // completeExit() deliberately never called.
 
-      await BrowserDevtoolsSession.killAndAwaitExit(process, timeout: const Duration(milliseconds: 100));
+      await BrowserDevtoolsSession.killAndAwaitExit(
+        process,
+        timeout: const Duration(milliseconds: 100),
+        processTreeKiller: (executable, arguments) async => ProcessResult(0, 0, '', ''),
+      );
 
       expect(process.killSignals, [ProcessSignal.sigterm, ProcessSignal.sigkill]);
     });

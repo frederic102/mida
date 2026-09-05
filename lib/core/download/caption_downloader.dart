@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../extractors/media_models.dart';
+import '../net/host_policy.dart';
 import '../utils/url_parser.dart';
 import '../../features/download/services/download_service_io.dart';
 
@@ -37,7 +38,17 @@ class CaptionDownloadPlan {
 class CaptionDownloader {
   final HttpClient _httpClient;
 
-  CaptionDownloader({HttpClient? httpClient}) : _httpClient = httpClient ?? HttpClient();
+  /// Exempts only the caption URL's own host (hop 0) from the https-only
+  /// and private-host checks - lets tests point this at a local
+  /// `http://127.0.0.1` fixture server. Every hop reached via a redirect
+  /// is always checked regardless (see [HostPolicy.guardedRequest]), so a
+  /// caption URL that redirects to a private/loopback address is still
+  /// refused even in a test that sets this. Production code must never
+  /// set this to true.
+  final bool allowPrivateHosts;
+
+  CaptionDownloader({HttpClient? httpClient, this.allowPrivateHosts = false})
+      : _httpClient = httpClient ?? HttpClient();
 
   /// Decides which caption track(s) to fetch for the requested
   /// [SubtitleOption] (equivalent to write-subs + write-auto-subs for the
@@ -90,7 +101,15 @@ class CaptionDownloader {
   }
 
   /// Downloads [track]'s captions as VTT text to [outputPath], optionally
-  /// requesting an on-the-fly translation into [translateTo].
+  /// requesting an on-the-fly translation into [translateTo]. Routed
+  /// through [HostPolicy.guardedRequest] (rather than trusting
+  /// `HttpClientRequest.followRedirects`, which this used to do
+  /// unconditionally) so every redirect hop - not just the URL [track]
+  /// itself carries - is host-checked before being fetched; a caption
+  /// host that redirects to a private/loopback address would otherwise
+  /// let it turn this app into an SSRF proxy against its own host/LAN,
+  /// same as the risk `StreamDownloader`'s own redirect handling guards
+  /// against.
   Future<void> download(
     CaptionTrack track,
     String outputPath, {
@@ -98,14 +117,18 @@ class CaptionDownloader {
     Map<String, String> headers = const {},
   }) async {
     final uri = Uri.parse(track.url);
-    _requireSecureUrl(uri);
+    _requireAllowedUrl(uri);
     final params = {...uri.queryParameters, 'fmt': 'vtt'};
     if (translateTo != null) params['tlang'] = translateTo;
     final vttUri = uri.replace(queryParameters: params);
 
-    final request = await _httpClient.getUrl(vttUri);
-    headers.forEach(request.headers.set);
-    final response = await request.close();
+    final response = await HostPolicy.guardedRequest(
+      _httpClient,
+      vttUri,
+      useHead: false,
+      configureRequest: (request) => headers.forEach(request.headers.set),
+      allowPrivateHosts: allowPrivateHosts,
+    );
     if (response.statusCode != 200) {
       throw CaptionDownloadException(
         'HTTP ${response.statusCode} fetching captions from ${UrlParser.stripQuery(uri)}',
@@ -115,11 +138,14 @@ class CaptionDownloader {
     await File(outputPath).writeAsString(body);
   }
 
-  /// Same https-only policy as [StreamDownloader] (loopback excepted for
-  /// this project's local-server tests): caption URLs are signed too.
-  void _requireSecureUrl(Uri uri) {
-    final isLoopback = uri.host == '127.0.0.1' || uri.host == 'localhost' || uri.host == '::1';
-    if (uri.scheme != 'https' && !isLoopback) {
+  /// Same https-only policy as [StreamDownloader] ([allowPrivateHosts]
+  /// exempts only this entry URL, same convention): caption URLs are
+  /// signed too. Private-host/DNS-rebinding checks for this hop and every
+  /// redirect hop after it are [HostPolicy.guardedRequest]'s own job, not
+  /// this method's.
+  void _requireAllowedUrl(Uri uri) {
+    if (allowPrivateHosts) return;
+    if (uri.scheme != 'https') {
       throw CaptionDownloadException('Refusing a non-https URL: ${UrlParser.stripQuery(uri)}');
     }
   }

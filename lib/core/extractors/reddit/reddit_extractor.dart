@@ -91,7 +91,7 @@ class RedditExtractor implements MediaExtractor {
 
     final manifestUri = Uri.parse(dashUrl);
     final baseUrl = dashUrl.substring(0, dashUrl.lastIndexOf('/') + 1);
-    final manifestXml = await _fetchText(_dashRequestUrlBuilder(manifestUri));
+    final manifestXml = await _fetchText(_dashRequestUrlBuilder(manifestUri), allowNotFound: false);
     final formats = _dashParser.parse(manifestXml, baseUrl: baseUrl);
 
     return MediaInfo(
@@ -107,7 +107,7 @@ class RedditExtractor implements MediaExtractor {
   }
 
   Future<dynamic> _fetchJson(Uri listingUrl) async {
-    final raw = await _fetchText(_listingRequestUrlBuilder(listingUrl));
+    final raw = await _fetchText(_listingRequestUrlBuilder(listingUrl), allowNotFound: true);
     try {
       return jsonDecode(raw);
     } on FormatException {
@@ -118,18 +118,43 @@ class RedditExtractor implements MediaExtractor {
     }
   }
 
-  Future<String> _fetchText(Uri requestUrl) async {
+  /// [allowNotFound] gates whether a bare HTTP 404 on [requestUrl] can
+  /// ever become the terminal `NOT_FOUND` at all - only the `.json`
+  /// listing fetch passes `true`, and even then only after a body-shape
+  /// corroboration below. The DASH manifest fetch passes `false`: an
+  /// unreachable manifest for a post whose listing already resolved is
+  /// not an expected "this does not exist" case, so any 404 there falls
+  /// into the same uncorroborated-404 branch as a listing 404 with no
+  /// JSON body - `CHALLENGE_FAILED` (fall-through eligible), never
+  /// terminal.
+  Future<String> _fetchText(Uri requestUrl, {required bool allowNotFound}) async {
     final httpClient = _httpClientFactory();
     try {
       final request = await httpClient.getUrl(requestUrl);
       request.headers.set('User-Agent', _userAgent);
       final response = await request.close();
+      final contentType = response.headers.contentType?.mimeType;
       final body = await response.transform(utf8.decoder).join();
 
       if (response.statusCode == 404) {
+        // Corroborate before trusting a bare 404 as terminal: Reddit's
+        // own `.json` API answers a genuinely-gone post with a JSON body
+        // (this pass could not capture the exact live shape - every
+        // request from this network hit the anti-bot challenge first,
+        // see the class doc - but the challenge shell itself is
+        // consistently `text/html`, confirmed across 3 hosts). Requiring
+        // a JSON content-type at minimum means a WAF/proxy synthesizing
+        // a 404 with its own HTML page is never mistaken for Reddit's
+        // own "not found" answer.
+        if (allowNotFound && (contentType?.contains('json') ?? false)) {
+          throw const MediaExtractionException(
+            'NOT_FOUND',
+            'This Reddit post or video no longer exists.',
+          );
+        }
         throw const MediaExtractionException(
-          'NOT_FOUND',
-          'This Reddit post or video no longer exists.',
+          'CHALLENGE_FAILED',
+          'Reddit returned an unrecognized 404 response for this request.',
         );
       }
       if (response.statusCode == 403) {

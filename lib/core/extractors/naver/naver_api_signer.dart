@@ -2,6 +2,11 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+/// Policy: this reproduces the site's own public web-player request contract
+/// (a signing constant shipped in the site's JavaScript to every visitor). No
+/// challenge solving, no fingerprint spoofing. If the site changes its
+/// contract we stop working there; we do not evade.
+///
 /// Replicates the request-signing scheme `tv.naver.com`'s own web client
 /// (the Next.js bundle's `_app` chunk) computes client-side before calling
 /// its `apis.naver.com/now_web2/now_web_api/v1/...` gateway. Reverse

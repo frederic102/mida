@@ -111,5 +111,16 @@ void main() {
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'PARSE_ERROR')),
       );
     });
+
+    test('maps HTTP 404 on the page to NETWORK (fall-through eligible), not terminal NOT_FOUND', () async {
+      // Guard-can-fail: Douyin's real watch page answers 200 even for a
+      // nonexistent video id from this network, so a bare 404 is more
+      // likely a WAF/proxy synthesizing one than Douyin itself.
+      server.statusCode = 404;
+      await expectLater(
+        buildExtractor().extract(Uri.parse('https://www.douyin.com/video/1')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NETWORK')),
+      );
+    });
   });
 }

@@ -26,8 +26,8 @@ import '../extractors/media_models.dart';
 /// several call sites need a quick sync check. A hostname that only
 /// *resolves* to a private address (DNS rebinding) needs an async
 /// resolve-then-check instead; [guardedRequest] does that itself (see
-/// [_assertResolvesToPublicHost]) since it is already async and is the
-/// single choke point every actual network request goes through.
+/// [assertResolvesToPublicHost]), and callers that only read a reference
+/// without fetching it can call [assertResolvesToPublicHost] directly.
 class HostPolicy {
   const HostPolicy._();
 
@@ -38,11 +38,22 @@ class HostPolicy {
   /// `::1`), RFC1918 private (`10.0.0.0/8`, `172.16.0.0/12`,
   /// `192.168.0.0/16`), link-local (`169.254.0.0/16`, `fe80::/10`),
   /// `0.0.0.0`/`::`, `localhost`/`*.localhost`, IPv6 unique-local
-  /// (`fc00::/7`), or an IPv4-mapped IPv6 literal wrapping any of the
-  /// above (`::ffff:a.b.c.d`).
+  /// (`fc00::/7`), an IPv4-mapped IPv6 literal wrapping any of the above
+  /// (`::ffff:a.b.c.d`), or [url] having **no host at all** (`blob:`,
+  /// `data:`, `mailto:`, ...). A hostless URI is not a private-looking
+  /// destination, but it is not a fetchable one either: `HttpClient.getUrl`
+  /// throws a raw `ArgumentError` ("No host specified in URI ...") for one
+  /// rather than any of this app's own typed exceptions, and that
+  /// `ArgumentError` (a Dart `Error`, not an `Exception`) is *not* caught by
+  /// `MediaDownloadPipeline`'s per-candidate `on Exception` handler - it
+  /// would crash the whole download instead of just failing that one
+  /// candidate (live-caught: a browser-captured `blob:` URL surviving into
+  /// `MediaInfo.formats` for one site). Treating "no host" as disallowed
+  /// here turns that crash into this app's own clean `UNSUPPORTED_URL`/
+  /// refusal, at the single choke point every fetch already goes through.
   static bool isDisallowedHost(Uri url) {
     final host = url.host;
-    if (host.isEmpty) return false;
+    if (host.isEmpty) return true;
     final normalized = host.toLowerCase();
 
     if (normalized == 'localhost' || normalized.endsWith('.localhost')) return true;
@@ -111,6 +122,9 @@ class HostPolicy {
   /// through that check. This resolves [url]'s host (skipped entirely for
   /// a literal IP host - [isDisallowedHost] already covers that case) via
   /// [resolveHost] and rejects if *any* returned address is disallowed.
+  /// Public so callers that only ever *read* a reference (never fetch it
+  /// themselves - e.g. [ManifestReferenceScanner]'s segment/key/map leaves)
+  /// can still run this same check without going through [guardedRequest].
   ///
   /// Residual risk, documented rather than hidden: `dart:io`'s
   /// `HttpClient` does its own independent DNS resolution moments later,
@@ -120,22 +134,30 @@ class HostPolicy {
   /// the resolved address into the socket connect call itself, which
   /// `dart:io`'s `HttpClient` does not expose a hook for - can close.
   ///
-  /// A lookup failure (offline test sandbox, transient DNS error, genuine
-  /// NXDOMAIN) is treated as inconclusive, not disallowed: it is not
-  /// itself evidence the host is unsafe, and the real request just below
-  /// will attempt its own resolution and fail there, with its own more
-  /// specific error, if the host is truly unreachable.
-  static Future<void> _assertResolvesToPublicHost(
-    Uri url,
-    Future<List<InternetAddress>> Function(String host) resolveHost,
-  ) async {
+  /// A lookup failure (offline sandbox, transient DNS error, genuine
+  /// NXDOMAIN, ...) now fails CLOSED: it is refused with the same
+  /// `UNSUPPORTED_URL` rather than waved through as "inconclusive". A
+  /// silent DNS failure is exactly the condition an attacker controlling
+  /// the network path (the same threat model this whole guard exists for)
+  /// can induce on purpose to bypass a fail-open check; the real request
+  /// this guards would very likely fail too if the lookup was a genuine
+  /// transient error, so failing closed here costs little in practice.
+  static Future<void> assertResolvesToPublicHost(
+    Uri url, {
+    Future<List<InternetAddress>> Function(String host) resolveHost = InternetAddress.lookup,
+  }) async {
     final host = url.host;
     if (host.isEmpty || InternetAddress.tryParse(host) != null) return;
     List<InternetAddress> addresses;
     try {
       addresses = await resolveHost(host);
-    } catch (_) {
-      return;
+    } catch (e) {
+      throw MediaExtractionException(
+        'UNSUPPORTED_URL',
+        'Refusing to fetch $url: could not resolve its hostname ("$host") to check whether it points at a '
+            'private, loopback, or link-local network address ($e). Failing closed rather than proceeding '
+            'without that check.',
+      );
     }
     for (final address in addresses) {
       if (_isDisallowedAddress(address)) {
@@ -187,7 +209,7 @@ class HostPolicy {
                 'through redirects, to avoid a page making this app reach your local network.',
           );
         }
-        await _assertResolvesToPublicHost(currentUrl, resolveHost);
+        await assertResolvesToPublicHost(currentUrl, resolveHost: resolveHost);
       }
 
       final request = useHead ? await client.headUrl(currentUrl) : await client.getUrl(currentUrl);

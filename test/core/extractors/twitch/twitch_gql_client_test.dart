@@ -5,13 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/media_models.dart';
 import 'package:mida/core/extractors/twitch/twitch_gql_client.dart';
 
-/// Local server standing in for `gql.twitch.tv`, serving both the
-/// `/integrity` and `/gql` endpoints the client hits in sequence (same
-/// pattern as `test/core/extractors/twitter/twitter_extractor_test.dart`).
+/// Local server standing in for `gql.twitch.tv`'s `/gql` endpoint.
 class _FakeTwitchServer {
   final HttpServer server;
   int gqlStatusCode = 200;
   String gqlBody = '{"data":{}}';
+  String? lastClientId;
   String? lastClientIntegrity;
   List<String?> requestedPaths = [];
 
@@ -28,12 +27,7 @@ class _FakeTwitchServer {
 
   Future<void> _handle(HttpRequest request) async {
     requestedPaths.add(request.uri.path);
-    if (request.uri.path == '/integrity') {
-      request.response.statusCode = 200;
-      request.response.write(jsonEncode({'token': 'fake-integrity-token', 'expiration': 0}));
-      await request.response.close();
-      return;
-    }
+    lastClientId = request.headers.value('client-id');
     lastClientIntegrity = request.headers.value('client-integrity');
     request.response.statusCode = gqlStatusCode;
     request.response.write(gqlBody);
@@ -53,13 +47,17 @@ void main() {
         endpointBuilder: (path) => server.baseUri.replace(path: path),
       );
 
-  test('fetches an integrity token first, then sends it on the gql request', () async {
+  test('sends only the public Client-ID (no Client-Integrity, no /integrity call)', () async {
+    // Guard-can-fail: policy check (docs/plan-phase5-coverage.md Lane D
+    // review round 2) - this client must never mint/replay a
+    // Client-Integrity token; re-adding that would make this test fail.
     server.gqlBody = jsonEncode({'data': {'video': null}});
     final data = await buildClient().query('query{video(id:"1"){id}}', const {});
 
     expect(data, {'video': null});
-    expect(server.requestedPaths, ['/integrity', '/gql']);
-    expect(server.lastClientIntegrity, 'fake-integrity-token');
+    expect(server.requestedPaths, ['/gql']);
+    expect(server.lastClientId, TwitchGqlClient.publicClientId);
+    expect(server.lastClientIntegrity, isNull);
   });
 
   test('maps HTTP 429 to RATE_LIMITED and other non-200 to NETWORK', () async {

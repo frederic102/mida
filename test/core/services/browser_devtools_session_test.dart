@@ -39,7 +39,12 @@ class _InstantExitFakeProcess implements Process {
   @override
   final int pid;
 
-  _InstantExitFakeProcess({required this.pid});
+  /// Shared with a test's own `processTreeKiller` override so the two can
+  /// be compared for relative order - see the "process-tree sweep" group
+  /// below.
+  final List<String>? callOrder;
+
+  _InstantExitFakeProcess({required this.pid, this.callOrder});
 
   @override
   Stream<List<int>> get stdout => const Stream.empty();
@@ -54,7 +59,10 @@ class _InstantExitFakeProcess implements Process {
   Future<int> get exitCode => Future.value(0);
 
   @override
-  bool kill([ProcessSignal signal = ProcessSignal.sigterm]) => true;
+  bool kill([ProcessSignal signal = ProcessSignal.sigterm]) {
+    callOrder?.add('processKill');
+    return true;
+  }
 }
 
 void main() {
@@ -194,6 +202,22 @@ void main() {
     test(
       'kills the underlying process and deletes the profile dir when the DevTools port never comes up',
       () async {
+        // Round 6 (coordinator flake report): this used to spawn a
+        // `ping -n 1 127.0.0.1` (~1 real second per tick) tick loop, wait a
+        // real 900ms to sample it, and assert a 10s wall-clock ceiling
+        // across a doubled headed+headless attempt - occasionally flaky
+        // under load (CI/parallel contention slowing real process
+        // scheduling enough to tip either bound). Rewritten to keep real
+        // waits under 2s total and to assert on the *recorded* marker-file
+        // call count at two fixed, short checkpoints rather than a wall-
+        // clock race: `preferHeaded: false` removes the doubled attempt
+        // entirely (single connect attempt only), `connectTimeout` is cut
+        // to 150ms, and the fake browser ticks via a delay-free loop (as
+        // fast as the batch interpreter allows, hundreds of ticks/second)
+        // so a short, fixed 200ms sampling window still yields a large,
+        // unambiguous tick-count delta when *not* killed - no need for a
+        // long real wait to get separation between "still running" and
+        // "killed".
         final marker = File('${workDir.path}/beats.txt');
         final bat = _writeFakeBrowser(
           workDir,
@@ -202,21 +226,19 @@ void main() {
             '@echo off',
             ':loop',
             'echo tick>>"${marker.path}"',
-            'ping -n 1 127.0.0.1 >nul',
             'goto loop',
           ],
         );
 
         final before = midaCdpTempDirs();
-        final stopwatch = Stopwatch()..start();
         await expectLater(
           BrowserDevtoolsSession.launch(
             candidatePaths: () => [bat.path],
-            connectTimeout: const Duration(milliseconds: 300),
+            connectTimeout: const Duration(milliseconds: 150),
+            preferHeaded: false,
           ),
           throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NETWORK')),
         );
-        stopwatch.stop();
         final after = midaCdpTempDirs();
 
         // Guard 1 (profile cleanup): no *new* mida_cdp_* dir survives a
@@ -232,25 +254,19 @@ void main() {
         expect(after.difference(before), isEmpty);
 
         // Guard 2 (process actually killed, not just our own await
-        // returning): the .bat keeps appending to `marker` every tick
-        // until it is killed. Sample it once right after the throw, wait
-        // past another few tick intervals, and confirm it stopped
-        // growing. Commenting out `process.kill()` in the `launch()`
-        // catch block turns this red (the file keeps growing).
+        // returning): the .bat keeps appending to `marker` every tick,
+        // as fast as it can, until it is killed. A fixed 200ms window
+        // (well under this file's own 2s ceiling) after the throw is
+        // plenty of separation - if `process.kill()` were commented out
+        // of `launch()`'s catch block, the un-killed loop would keep
+        // appending lines throughout that window; a killed process
+        // appends exactly zero more.
         final countAtThrow = marker.existsSync() ? marker.readAsLinesSync().length : 0;
-        await Future<void>.delayed(const Duration(milliseconds: 900));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
         final countLater = marker.existsSync() ? marker.readAsLinesSync().length : 0;
-        expect(countLater - countAtThrow, lessThan(3));
-
-        // launch() must not have blocked past roughly twice its own
-        // connectTimeout plus cleanup margin: it now tries a headed launch
-        // first and falls back to headless (docs/plan-phase5-coverage.md
-        // Lane A headed-first) - against this same hung fake browser, both
-        // attempts fail the same way, so the worst case is genuinely two
-        // full attempts back to back, not one.
-        expect(stopwatch.elapsed, lessThan(const Duration(seconds: 10)));
+        expect(countLater, countAtThrow);
       },
-      timeout: const Timeout(Duration(seconds: 20)),
+      timeout: const Timeout(Duration(seconds: 10)),
     );
 
     test('passes --remote-debugging-address=127.0.0.1, not just the port, to the browser executable', () async {
@@ -298,12 +314,26 @@ void main() {
         },
       );
 
-      // On non-Windows this override is never invoked at all (see
-      // BrowserProcessTree's own tests) - only assert the pid on Windows,
-      // where it is.
-      if (Platform.isWindows) {
-        expect(capturedPid, 98765);
-      }
+      expect(capturedPid, 98765);
+    });
+
+    test('guard can fail: the tree kill is issued before the parent process is killed, not after', () async {
+      // Independent review round 2: `taskkill /T` (or `pkill -P` on
+      // macOS/Linux) needs a *live* tree to walk - calling it after the
+      // parent has already been killed and awaited orphans its children
+      // instead of reaching them.
+      final callOrder = <String>[];
+      final process = _InstantExitFakeProcess(pid: 98765, callOrder: callOrder);
+
+      await BrowserDevtoolsSession.killAndAwaitExit(
+        process,
+        processTreeKiller: (executable, arguments) async {
+          callOrder.add('treeKill');
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+
+      expect(callOrder, ['treeKill', 'processKill']);
     });
   });
 }

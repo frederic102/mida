@@ -84,6 +84,45 @@ void main() {
     expect(leftoversExcluding({path}), isEmpty, reason: 'the .part temp was not cleaned up after a successful move');
   });
 
+  test('guard can fail: a muxed format labeled https whose URL itself ends in .m3u8 is still routed through '
+      'HlsFfmpegDownloader (a mislabeled manifest, not routed by protocol alone)', () async {
+    final hlsDownloader = RecordingHlsDownloader();
+    final pipeline = MediaDownloadPipeline(
+      hlsDownloader: hlsDownloader,
+      // A StreamDownloader that would fail loudly if ever actually used -
+      // proves this candidate never reaches it at all.
+      downloaderFactory: () => StreamDownloader(allowPrivateHosts: false),
+      verifier: DownloadOutcomeVerifier(prober: FixedProber({'video', 'audio'})),
+    );
+    final info = MediaInfo(
+      id: 'mislabeled_manifest',
+      title: 'mislabeled manifest test',
+      duration: const Duration(seconds: 10),
+      sourceUrl: Uri.parse('https://example.invalid'),
+      formats: [
+        const MediaFormat(
+          id: 'v1',
+          url: 'https://example.invalid/master.m3u8?token=abc',
+          container: 'mp4',
+          protocol: 'https', // mislabeled: the URL itself is a manifest
+          height: 720,
+          hasVideo: true,
+          hasAudio: true,
+        ),
+      ],
+    );
+
+    final path = await pipeline.download(
+      info: info,
+      type: DownloadType.video,
+      options: const DownloadOptions(videoFormat: VideoFormat.mp4),
+      outputDir: outDir.path,
+    );
+
+    expect(hlsDownloader.urlsRequested, ['https://example.invalid/master.m3u8?token=abc']);
+    expect(path, '${outDir.path}/mislabeled manifest test.mp4');
+  });
+
   test('an ffmpeg failure on the hls path surfaces (wrapped) with no leftover .part file (guard: Vigil #1)', () async {
     final hlsDownloader = RecordingHlsDownloader()..shouldThrow = true;
     final pipeline = MediaDownloadPipeline(hlsDownloader: hlsDownloader);

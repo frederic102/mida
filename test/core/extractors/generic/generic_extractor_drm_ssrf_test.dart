@@ -129,101 +129,10 @@ seg.m3u8
     // pointing at the URL that 404s). The DRM-only test has its own
     // separate guard-can-fail note in `html_media_sniffer_test.dart`
     // (disabling `HtmlMediaSniffer._looksLikeDrmUrl` turns it red there).
-
-    test(
-      'manifest-body DRM detection: an HLS master whose URL looks clean but whose body carries '
-      '#EXT-X-KEY METHOD=SAMPLE-AES raises DRM_PROTECTED (not silently exposed as a downloadable format) '
-      '(security follow-up: the sniffer\'s own URL-substring DRM check cannot see this at all)',
-      () async {
-        final drmPlaylistServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        addTearDown(() => drmPlaylistServer.close(force: true));
-        drmPlaylistServer.listen((request) async {
-          request.response.headers.set('Content-Type', 'application/vnd.apple.mpegurl');
-          request.response.write(
-            '#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,KEYFORMAT="com.apple.streamingkeydelivery"\n'
-            '#EXTINF:6.0,\nseg0.ts\n#EXT-X-ENDLIST\n',
-          );
-          await request.response.close();
-        });
-
-        server.body = '''
-          <html><body>
-            <video src="http:\\/\\/127.0.0.1:${drmPlaylistServer.port}\\/master.m3u8"></video>
-          </body></html>
-        ''';
-
-        final extractor = GenericExtractor(allowPrivateHosts: true);
-        await expectLater(
-          extractor.extract(server.urlFor('/protected')),
-          throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'DRM_PROTECTED')),
-        );
-      },
-    );
-
-    test(
-      'manifest-body DRM detection: a DASH .mpd whose body carries <ContentProtection> raises DRM_PROTECTED',
-      () async {
-        final drmMpdServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        addTearDown(() => drmMpdServer.close(force: true));
-        drmMpdServer.listen((request) async {
-          request.response.headers.set('Content-Type', 'application/dash+xml');
-          request.response.write(
-            '<MPD><Period><AdaptationSet><ContentProtection '
-            'schemeIdUri="urn:mpeg:dash:mp4protection:2011"/></AdaptationSet></Period></MPD>',
-          );
-          await request.response.close();
-        });
-
-        server.body = '''
-          <html><body>
-            <source src="http:\\/\\/127.0.0.1:${drmMpdServer.port}\\/manifest.mpd">
-          </body></html>
-        ''';
-
-        final extractor = GenericExtractor(allowPrivateHosts: true);
-        await expectLater(
-          extractor.extract(server.urlFor('/protected-dash')),
-          throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'DRM_PROTECTED')),
-        );
-      },
-    );
-
-    test(
-      'manifest-body DRM detection: a plain AES-128 HLS stream (ffmpeg-decryptable, not DRM) still '
-      'produces a downloadable format',
-      () async {
-        final aes128Server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        addTearDown(() => aes128Server.close(force: true));
-        aes128Server.listen((request) async {
-          request.response.headers.set('Content-Type', 'application/vnd.apple.mpegurl');
-          request.response.write(
-            '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.example.com/key.bin"\n'
-            '#EXTINF:6.0,\nseg0.ts\n#EXT-X-ENDLIST\n',
-          );
-          await request.response.close();
-        });
-
-        server.body = '''
-          <html><body>
-            <video src="http:\\/\\/127.0.0.1:${aes128Server.port}\\/master.m3u8"></video>
-          </body></html>
-        ''';
-
-        final extractor = GenericExtractor(allowPrivateHosts: true);
-        final info = await extractor.extract(server.urlFor('/aes128'));
-
-        expect(info.formats, hasLength(1));
-        expect(info.formats.single.container, 'm3u8');
-      },
-    );
-
-    // Guard-can-fail evidence (verified, see report): temporarily making
-    // `FormatExpander.expandFormats` skip the
-    // `DrmPlaylistScanner.isHlsDrmProtected(fetch.body)` check entirely
-    // made the SAMPLE-AES test above fail: instead of throwing
-    // DRM_PROTECTED, `extract()` returned a normal `MediaInfo` with one
-    // m3u8 format pointing at the encrypted stream. Reverted immediately
-    // after confirming the failure.
+    //
+    // Manifest-body DRM detection (SAMPLE-AES/PlayReady/ContentProtection/
+    // every-variant-checked/8-fetch-cap) has its own dedicated file:
+    // `generic_extractor_drm_manifest_test.dart`.
   });
 
   group('GenericExtractor: SSRF guard (host_policy.dart)', () {

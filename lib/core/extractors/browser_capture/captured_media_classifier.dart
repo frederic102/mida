@@ -86,7 +86,81 @@ class CapturedMediaClassifier {
     'webm': 'webm',
   };
 
+  /// The single gate every candidate-producing path in this class (and
+  /// [CapturedMediaRanker]'s DOM tier) must pass before minting a
+  /// candidate: only `http`/`https` is ever downloadable by this app's own
+  /// pipeline. Round 4 (real-download gate regression, nicovideo):
+  /// Chromium does emit real `Network.requestWillBeSent`/
+  /// `Network.responseReceived` events, complete with a `video/*`
+  /// `Content-Type`, for a `<video>` element's `blob:` (MediaSource) src -
+  /// and this class's own extension-less mimeType fallback (added for
+  /// vk.com/Bandcamp's bare signed CDN paths) never checked the URL's
+  /// scheme at all, so a `video/mp4` response for a `blob:https://...`
+  /// URL sailed straight through as a legitimate candidate. Non-
+  /// deterministic in practice because whether that particular CDP event
+  /// fires (and how it sorts against real candidates by content-length) is
+  /// itself a race. `blob:`/`data:`/`mediasource:`/a malformed URL (no
+  /// scheme at all) are all rejected the same way here - not just a
+  /// string-literal `blob:` prefix check, so the next pseudo-scheme
+  /// Chromium reports this way for does not need its own bespoke check.
+  static bool isFetchableUrl(String url) {
+    final scheme = Uri.tryParse(url)?.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https';
+  }
+
+  /// A URL shaped like one piece of a larger fragmented stream (a CMAF/
+  /// fMP4 chunk or an HLS/DASH segment) rather than a complete,
+  /// independently downloadable file - checked *before* any mimeType-based
+  /// acceptance in [classify] (including the extension-less fallback just
+  /// below), so a segment-shaped URL is excluded even when its own
+  /// response carries a real `video/*`/`audio/*` Content-Type.
+  ///
+  /// Round 6 (coordinator regression report - vimeo/bbc/vk all broke on
+  /// round 5's broader rules): per-URL, this now checks only two things -
+  /// a real segment *extension* (`.m4s`/`.cmfv`/`.cmfa`/`.ts`), or an
+  /// `init`/`seg`/`frag`/`chunk` *path token* matched with word boundaries
+  /// (flanked by `/`, `_`, `.`, or `-`, or the start/end of the path) so a
+  /// signed CDN path that merely *contains* one of those letters
+  /// somewhere (round 5's bare-substring version matched "chunk" inside
+  /// an unrelated hostname, "init" inside an unrelated path component,
+  /// etc.) is no longer enough. `range=`/`bytes=` and a bare numeric run
+  /// before an extension (round 5's `\d{2,5}\.(?:m4s|cmfv|cmfa|mp4)`) are
+  /// both *removed* from this per-URL check entirely - real sites
+  /// (vimeo's HLS manifest fetch, bbc's and vk.com's progressive
+  /// whole-file downloads) routinely carry `range=`/`bytes=` query
+  /// params or a numbered rendition filename on a single, large,
+  /// legitimate candidate with no siblings at all; round 5 rejected those
+  /// unconditionally, per-URL, with no regard to size or sibling count.
+  /// The *only* place size/sibling-count-based fragment detection now
+  /// happens is [NetworkSignalRecorder.reclassifyFragmentedSiblings] (a
+  /// group of 3+ small candidates sharing a numbered-path signature) -
+  /// see that method's own doc comment. A single `bytes=`/`range=`
+  /// candidate, however small, is therefore no longer demoted by this
+  /// method at all; only the sibling-count pass can catch it, and only
+  /// as part of a real group.
+  static final RegExp _segmentExtensionPattern = RegExp(
+    r'\.(?:cmfv|cmfa|m4s|ts)(?:[/?&#]|$)',
+    caseSensitive: false,
+  );
+
+  static final RegExp _segmentPathTokenPattern = RegExp(
+    r'(?:^|[/_.\-])(?:init|seg|frag|chunk)(?:[/_.\-]|$)',
+    caseSensitive: false,
+  );
+
+  static bool isSegmentUrl(String url) {
+    if (_segmentExtensionPattern.hasMatch(url)) return true;
+    // Path only (not the full URL): a query-string tracking/signature
+    // param, or the host itself, coincidentally containing one of these
+    // four short words must not flag an otherwise-ordinary candidate -
+    // this is specifically the shape round 5's whole-URL substring match
+    // broke on.
+    final path = Uri.tryParse(url)?.path ?? url;
+    return _segmentPathTokenPattern.hasMatch(path);
+  }
+
   static CapturedMediaCandidate? classify(String url, String? mimeType) {
+    if (!isFetchableUrl(url) || isSegmentUrl(url)) return null;
     final mime = (mimeType ?? '').toLowerCase();
     final mimeQualifies =
         _exactMimesRequiringExtension.contains(mime) || _mimePrefixesRequiringExtension.any(mime.startsWith);
@@ -155,6 +229,7 @@ class CapturedMediaClassifier {
   /// exclusion as [classify]; see [_extensionContainers] lacking an
   /// `m4s` entry).
   static CapturedMediaCandidate? classifyByUrlOnly(String url) {
+    if (!isFetchableUrl(url) || isSegmentUrl(url)) return null;
     final ext = _mediaExtensionPattern.firstMatch(url)?.group(1)?.toLowerCase();
     if (ext != null) {
       final container = _extensionContainers[ext];
@@ -239,9 +314,13 @@ class CapturedMediaRanker {
   static const int _minBytesWhenALargerCandidateExists = 64 * 1024;
 
   static List<CapturedMediaCandidate> rank(List<CapturedMediaCandidate> candidates, List<String> domVideoUrls) {
+    // Uses the same [CapturedMediaClassifier.isFetchableUrl] gate as every
+    // other candidate-producing path in this file (round 4) - not just a
+    // `blob:`-literal string check, so a URL missing/malformed here is
+    // rejected the same way it would be anywhere else in this pipeline.
     final trustedDomUrls = [
       for (final url in domVideoUrls)
-        if (!url.toLowerCase().startsWith('blob:')) url,
+        if (CapturedMediaClassifier.isFetchableUrl(url)) url,
     ];
 
     final byMatchKey = <String, CapturedMediaCandidate>{};

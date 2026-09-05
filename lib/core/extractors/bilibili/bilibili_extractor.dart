@@ -132,12 +132,17 @@ class BilibiliExtractor implements MediaExtractor {
       final response = await request.close();
       final html = await response.transform(utf8.decoder).join();
 
-      if (response.statusCode == 404) {
-        throw const MediaExtractionException(
-          'NOT_FOUND',
-          'This Bilibili video no longer exists or the link is wrong.',
-        );
-      }
+      // No dedicated 404 -> NOT_FOUND branch: live-checked 2026-09-06
+      // (`docs/plan-phase5-coverage.md` Lane D review round 2) that
+      // Bilibili's watch page answers HTTP 200 even for a nonexistent
+      // BV id (its own soft-block/empty-state shape - see
+      // BilibiliPageParser's doc). A 404 here would only come from an
+      // intermediary synthesizing one, not Bilibili itself, so it is
+      // folded into the same CHALLENGE_FAILED-or-NETWORK handling below
+      // rather than trusted as authoritative; BilibiliPageParser's own
+      // body-shape check (missing `cid`) is the real "not found vs
+      // anti-bot" signal, and it is deliberately CHALLENGE_FAILED, not
+      // NOT_FOUND, for the same reason.
       if (response.statusCode == 412 || response.statusCode == 403) {
         throw const MediaExtractionException(
           'CHALLENGE_FAILED',

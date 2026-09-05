@@ -7,21 +7,37 @@ import '../media_models.dart';
 /// (`gql.twitch.tv/gql`), used with the same public web client id Twitch's
 /// own `twitch.tv` frontend uses (`kimne78kx3ncx6brgo4mv6wki5h1ko`, long
 /// public knowledge - it identifies "the web player", not a user, and
-/// needs no OAuth for public VOD/clip metadata). Verified live 2026-09-05
-/// (`docs/plan-phase5-coverage.md` Lane D): ad-hoc (non-persisted) GraphQL
-/// queries are accepted with just this client id; some fields
-/// (`user.videos`, `game.clips`) return null/empty without also sending a
-/// `Client-Integrity` token, obtained anonymously (no login) from a
-/// separate `gql.twitch.tv/integrity` POST - both steps live in this
-/// class so [TwitchExtractor] only ever calls [query].
+/// needs no OAuth for public VOD metadata).
+///
+/// Sends only `Client-ID` - no `Client-Integrity` header. An earlier
+/// version of this class also called `gql.twitch.tv/integrity` to mint
+/// one and attach it to every request, mirroring what a real browser
+/// session does before certain queries. Policy review 2026-09-06
+/// (`docs/plan-phase5-coverage.md` Lane D review round 2): that endpoint
+/// *is* Twitch's own anti-abuse mechanism, and minting/replaying a token
+/// for it is the kind of thing this codebase does not do (see the
+/// no-evasion policy header on `BilibiliBuvidClient`/`BilibiliWbiSigner`/
+/// `NaverApiSigner`). Removed. Re-verified live the same day that the
+/// query [TwitchExtractor] actually needs -
+/// `videoPlaybackAccessToken(id: ..., params: {...})` for a real public
+/// VOD - returns the full playback token with just `Client-ID`, no
+/// integrity header at all; the two ad-hoc queries that did come back
+/// null/empty without it during initial investigation (`user.videos`,
+/// `game.clips`) were never used by any extractor in this codebase. If a
+/// query Twitch actually requires ever needs more than the plain public
+/// client id, the extractor lets it fail with a fall-through-eligible
+/// status (`CHALLENGE_FAILED`, see `TwitchExtractor._extractVod`'s doc)
+/// rather than reaching for another anti-abuse workaround here -
+/// `BrowserCaptureExtractor` is the correct next technique, not this
+/// class.
 class TwitchGqlClient {
   static const publicClientId = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
 
   final HttpClient Function() _httpClientFactory;
 
-  /// Rewrites both the integrity and gql endpoint URLs; tests point this
-  /// at a local `HttpServer` instead of the real `gql.twitch.tv` (same
-  /// seam as `TwitterExtractor.endpointBuilder`).
+  /// Rewrites the gql endpoint URL; tests point this at a local
+  /// `HttpServer` instead of the real `gql.twitch.tv` (same seam as
+  /// `TwitterExtractor.endpointBuilder`).
   final Uri Function(String path) _endpointBuilder;
 
   TwitchGqlClient({
@@ -31,34 +47,6 @@ class TwitchGqlClient {
         _endpointBuilder = endpointBuilder ?? _defaultEndpoint;
 
   static Uri _defaultEndpoint(String path) => Uri.parse('https://gql.twitch.tv$path');
-
-  /// Fetches a fresh anonymous integrity token. Twitch's own token has a
-  /// short lifetime (`expiration` in the response, typically minutes), so
-  /// this is not cached across calls - each [query] call gets its own.
-  Future<String> _fetchIntegrityToken(HttpClient client) async {
-    final request = await client.postUrl(_endpointBuilder('/integrity'));
-    request.headers.set('Client-ID', publicClientId);
-    request.headers.set('Content-Type', 'application/json');
-    request.add(utf8.encode('{}'));
-    final response = await request.close();
-    final raw = await response.transform(utf8.decoder).join();
-
-    if (response.statusCode != 200) {
-      throw MediaExtractionException(
-        'NETWORK',
-        'Twitch returned HTTP ${response.statusCode} while requesting an integrity token.',
-      );
-    }
-    final json = jsonDecode(raw) as Map<String, dynamic>;
-    final token = json['token'] as String?;
-    if (token == null) {
-      throw const MediaExtractionException(
-        'PARSE_ERROR',
-        'Twitch did not return an integrity token.',
-      );
-    }
-    return token;
-  }
 
   /// Runs a raw (non-persisted) GraphQL [query] with [variables], returning
   /// the decoded `data` object. Throws `RATE_LIMITED`/`NETWORK` for
@@ -70,11 +58,8 @@ class TwitchGqlClient {
   Future<Map<String, dynamic>> query(String gqlQuery, Map<String, dynamic> variables) async {
     final httpClient = _httpClientFactory();
     try {
-      final integrityToken = await _fetchIntegrityToken(httpClient);
-
       final request = await httpClient.postUrl(_endpointBuilder('/gql'));
       request.headers.set('Client-ID', publicClientId);
-      request.headers.set('Client-Integrity', integrityToken);
       request.headers.set('Content-Type', 'application/json');
       request.add(utf8.encode(jsonEncode({'query': gqlQuery, 'variables': variables})));
       final response = await request.close();

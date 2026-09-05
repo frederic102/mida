@@ -1,0 +1,37 @@
+{
+  "artwork_url": "https://i1.sndcdn.com/artworks-0RIqVz1rB6yc-0-large.jpg",
+  "duration": 30000,
+  "full_duration": 213603,
+  "id": 253508261,
+  "kind": "track",
+  "permalink": "never-gonna-give-you-up",
+  "permalink_url": "https://soundcloud.com/rick-astley-official/never-gonna-give-you-up",
+  "public": true,
+  "streamable": true,
+  "title": "Never Gonna Give You Up",
+  "user": {
+    "id": 207997261,
+    "username": "Rick Astley",
+    "permalink": "rick-astley-official"
+  },
+  "media": {
+    "transcodings": [
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:253508261/76d5370f-eaf8-4107-80e6-ffed84668dad/preview/hls",
+        "preset": "mp3_1_0",
+        "duration": 30000,
+        "snipped": true,
+        "format": {"protocol": "hls", "mime_type": "audio/mpeg"},
+        "quality": "sq"
+      },
+      {
+        "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:253508261/76d5370f-eaf8-4107-80e6-ffed84668dad/preview/progressive",
+        "preset": "mp3_1_0",
+        "duration": 30000,
+        "snipped": true,
+        "format": {"protocol": "progressive", "mime_type": "audio/mpeg"},
+        "quality": "sq"
+      }
+    ]
+  }
+}

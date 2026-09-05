@@ -4,16 +4,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/download/hls_ffmpeg_downloader.dart';
 import 'package:mida/core/extractors/media_models.dart';
 
+/// `cdn.example.com` never actually resolves (no A record beyond the
+/// apex `example.com` itself) - a fake resolver keeps this hermetic and
+/// independent of the manifest scanner's fail-closed DNS-answer check.
+Future<List<InternetAddress>> _fakePublicResolver(String host) async => [InternetAddress('93.184.216.34')];
+
 /// Records the args `downloadVerified` would have handed to ffmpeg instead
 /// of ever spawning a real process - lets a test inspect the `-headers`
 /// blob `_withScopedCookie` built without needing a real ffmpeg binary.
 class _ArgsCapturingDownloader extends HlsFfmpegDownloader {
   List<String>? capturedArgs;
 
-  _ArgsCapturingDownloader({super.httpClientFactory});
+  _ArgsCapturingDownloader({super.httpClientFactory}) : super(resolveHost: _fakePublicResolver);
 
   @override
-  Future<void> run(List<String> args, {Duration? totalDuration, void Function(double progress)? onProgress}) async {
+  Future<void> run(
+    List<String> args, {
+    Duration? totalDuration,
+    void Function(double progress)? onProgress,
+    Duration? processTimeout,
+  }) async {
     capturedArgs = args;
   }
 }
@@ -25,7 +35,7 @@ void main() {
       addTearDown(() => server.close(force: true));
       server.listen((request) async {
         request.response.headers.contentType = ContentType('application', 'vnd.apple.mpegurl');
-        request.response.write('#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.com/seg1.ts\n');
+        request.response.write('#EXTM3U\n#EXTINF:10,\nhttps://93.184.216.34/seg1.ts\n');
         await request.response.close();
       });
 
@@ -38,10 +48,10 @@ void main() {
 
       final downloader = _ArgsCapturingDownloader(httpClientFactory: pinnedToFixture);
       await downloader.downloadVerified(
-        url: 'https://cdn.example.com/media.m3u8',
+        url: 'https://93.184.216.34/media.m3u8',
         outputPath: 'C:/out/video.mp4',
         cookiesByDomain: const {
-          'cdn.example.com': [CookieEntry(domain: 'cdn.example.com', path: '/', secure: false, name: 'sid', value: 'xyz')],
+          '93.184.216.34': [CookieEntry(domain: '93.184.216.34', path: '/', secure: false, name: 'sid', value: 'xyz')],
           'unrelated.example.com': [
             CookieEntry(domain: 'unrelated.example.com', path: '/', secure: false, name: 'other', value: 'nope'),
           ],
@@ -66,7 +76,7 @@ void main() {
       addTearDown(() => server.close(force: true));
       server.listen((request) async {
         request.response.headers.contentType = ContentType('application', 'vnd.apple.mpegurl');
-        request.response.write('#EXTM3U\n#EXTINF:10,\nhttps://cdn.example.com/seg1.ts\n');
+        request.response.write('#EXTM3U\n#EXTINF:10,\nhttps://93.184.216.34/seg1.ts\n');
         await request.response.close();
       });
 
@@ -79,7 +89,7 @@ void main() {
 
       final downloader = _ArgsCapturingDownloader(httpClientFactory: pinnedToFixture);
       await downloader.downloadVerified(
-        url: 'https://cdn.example.com/media.m3u8',
+        url: 'https://93.184.216.34/media.m3u8',
         outputPath: 'C:/out/video.mp4',
         headers: const {'Cookie': 'legacy=1'},
       );

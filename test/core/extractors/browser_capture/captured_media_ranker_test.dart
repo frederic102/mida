@@ -47,6 +47,25 @@ void main() {
       expect(ranked.single.url, 'https://cdn.example.com/real.mp4');
     });
 
+    test(
+      'guard can fail: a non-blob, non-http pseudo-scheme (e.g. data:) DOM URL is excluded too - '
+      'proves this is a real scheme check, not a blob:-literal string match',
+      () {
+        // Round 4: CapturedMediaRanker used to check
+        // `!url.toLowerCase().startsWith('blob:')` directly; now it shares
+        // CapturedMediaClassifier.isFetchableUrl with every other
+        // candidate-producing path. A data: URL would have sailed straight
+        // through the old check.
+        final ranked = CapturedMediaRanker.rank(
+          [const CapturedMediaCandidate(url: 'https://cdn.example.com/real.mp4', container: 'mp4', contentLength: 5 * 1024 * 1024)],
+          ['data:video/mp4;base64,AAAA'],
+        );
+
+        expect(ranked, hasLength(1));
+        expect(ranked.single.url, 'https://cdn.example.com/real.mp4');
+      },
+    );
+
     test('a tiny captured asset is dropped once a confirmed-larger candidate exists', () {
       final ranked = CapturedMediaRanker.rank(
         [

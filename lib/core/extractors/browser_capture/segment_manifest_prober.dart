@@ -26,18 +26,40 @@ class SegmentManifestProber {
   SegmentManifestProber({HttpClient Function()? httpClientFactory, this.allowPrivateHosts = false})
       : _httpClientFactory = httpClientFactory ?? HttpClient.new;
 
-  /// Matches a `.m4s`/`.ts` fragment, or a `seg-`/`seg_`-prefixed
-  /// `.mp4` chunk (a common CDN naming convention for fragmented MP4
-  /// segments that would otherwise satisfy [CapturedMediaClassifier]'s
-  /// plain `.mp4` check and get misread as a whole downloadable file).
-  static final RegExp _segmentPattern = RegExp(
-    r'(?:^|/)seg[-_][^/?#]*\.mp4(?:[?#]|$)|\.(?:m4s|ts)(?:[?#]|$)',
-    caseSensitive: false,
-  );
+  static const List<String> _manifestNames = [
+    'master.m3u8',
+    'playlist.m3u8',
+    'index.m3u8',
+    'manifest.mpd',
+    // Round 5 (real-download-gate regression): observed alongside
+    // manifest.mpd on some CDNs, never tried before this round.
+    'stream.mpd',
+  ];
 
-  static const List<String> _manifestNames = ['master.m3u8', 'playlist.m3u8', 'index.m3u8', 'manifest.mpd'];
+  /// Hard cap on distinct directories [recoverFirst] will ever probe.
+  /// Without one, a page with many quality/CDN directories (observed live:
+  /// Bilibili, dozens of distinct segment paths across renditions) turns
+  /// this into `directories x 4 names` HTTP round trips, each a fresh TLS
+  /// handshake to a host that may not even exist - easily the dominant
+  /// cost of an entire capture attempt. See [_probeTimeout] for the other
+  /// half of the worst-case bound.
+  static const int _maxDirectoriesToTry = 4;
 
-  static bool looksLikeSegmentUrl(String url) => _segmentPattern.hasMatch(url);
+  /// Per-probe timeout: an unresponsive (not merely erroring) host must
+  /// not be allowed to hang [probe] indefinitely - `HttpClient`'s own
+  /// default connection timeout is unbounded.
+  static const Duration _probeTimeout = Duration(seconds: 4);
+
+  /// Forwards to [CapturedMediaClassifier.isSegmentUrl] - the single
+  /// canonical "is this a fragment, not a whole file" detector as of
+  /// round 5, shared with [CapturedMediaClassifier.classify] and
+  /// [CapturedMediaClassifier.classifyByUrlOnly] so a URL can never be
+  /// tracked as a downloadable candidate by one of those and *also* as a
+  /// segment here (or vice versa) - kept as its own named method (rather
+  /// than inlining the call at every existing call site) purely so this
+  /// file's own doc comments and tests can keep referring to "a segment
+  /// URL" in this file's own vocabulary.
+  static bool looksLikeSegmentUrl(String url) => CapturedMediaClassifier.isSegmentUrl(url);
 
   /// [url]'s own directory, query string dropped (a manifest lives
   /// beside its segments, never behind the same signed query a segment
@@ -83,7 +105,7 @@ class SegmentManifestProber {
     if (directory == null) return null;
     final directoryUri = Uri.parse(directory);
 
-    for (final name in _manifestNames) {
+    for (final name in [..._manifestNames, ..._basenameManifestGuesses(segmentUrl)]) {
       final candidateUrl = directoryUri.resolve(name);
       if (!allowPrivateHosts && HostPolicy.isDisallowedHost(candidateUrl)) continue;
 
@@ -95,8 +117,8 @@ class SegmentManifestProber {
           useHead: true,
           allowPrivateHosts: allowPrivateHosts,
           configureRequest: (request) => headers.forEach(request.headers.set),
-        );
-        await response.drain<void>();
+        ).timeout(_probeTimeout);
+        await response.drain<void>().timeout(_probeTimeout);
         if (response.statusCode == 200) {
           final container = name.endsWith('.mpd') ? 'mpd' : 'm3u8';
           return CapturedMediaCandidate(url: candidateUrl.toString(), container: container);
@@ -112,13 +134,51 @@ class SegmentManifestProber {
     return null;
   }
 
-  /// Probes every distinct directory represented in [segmentUrls] (in
+  /// Round 5 (real-download-gate regression): a `master.m3u8`-shaped guess
+  /// only ever tries a fixed handful of names an operator invented, but
+  /// some CDNs name a segment's own sibling manifest after the segment's
+  /// own base filename instead (e.g. `01.cmfv` beside `01.m3u8`, or an
+  /// `init.mp4` beside `init.m3u8`) - two extra, cheap guesses derived
+  /// from [segmentUrl] itself rather than a fixed vocabulary. Returns an
+  /// empty list (not a throw) for anything unparseable or with no
+  /// filename at all.
+  static List<String> _basenameManifestGuesses(String segmentUrl) {
+    try {
+      final uri = Uri.parse(segmentUrl);
+      if (uri.pathSegments.isEmpty) return const [];
+      final last = uri.pathSegments.last;
+      final dot = last.lastIndexOf('.');
+      final base = dot > 0 ? last.substring(0, dot) : last;
+      if (base.isEmpty) return const [];
+      return ['$base.m3u8', '$base.mpd'];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Probes distinct directories represented in [segmentUrls] (in
   /// iteration order, deduped so sibling segments from the same stream
-  /// only cost one round trip of guesses each), returning the first
-  /// recovered manifest, or null if none of them yielded one.
+  /// only cost one round trip of guesses each, capped at
+  /// [_maxDirectoriesToTry]), returning the first recovered manifest, or
+  /// null if none of them yielded one.
+  ///
+  /// Snapshots [segmentUrls] into a fixed list before iterating (guard can
+  /// fail: `BrowserCaptureExtractor` calls this with its own running,
+  /// still-`add`-ing-to `Set` - a real page keeps firing
+  /// `Network.responseReceived`/`requestWillBeSent` on the very same event
+  /// loop this method's own `await`s yield to, so iterating that Set
+  /// directly throws `ConcurrentModificationError` the instant a new
+  /// segment URL arrives mid-probe; observed live on Bilibili, see
+  /// docs/plan-phase5-coverage.md). `ConcurrentModificationError` is a
+  /// Dart `Error`, not an `Exception` - it would have skipped every
+  /// `on Exception` handler between here and the extractor's own caller
+  /// entirely, surfacing as a raw crash instead of a clean
+  /// `NO_MEDIA_FOUND`.
   Future<CapturedMediaCandidate?> recoverFirst(Iterable<String> segmentUrls, Map<String, String> headers) async {
+    final snapshot = segmentUrls.toList(growable: false);
     final triedDirectories = <String>{};
-    for (final segmentUrl in segmentUrls) {
+    for (final segmentUrl in snapshot) {
+      if (triedDirectories.length >= _maxDirectoriesToTry) break;
       final directory = directoryOf(segmentUrl);
       if (directory == null || !triedDirectories.add(directory)) continue;
       final recovered = await probe(segmentUrl, headers);

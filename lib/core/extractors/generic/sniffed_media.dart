@@ -1,3 +1,4 @@
+import '../browser_capture/format_capabilities.dart';
 import 'media_url_probe.dart';
 
 /// A media URL found while sniffing a page: already resolved to an
@@ -30,6 +31,15 @@ import 'media_url_probe.dart';
 /// `GenericExtractor` must treat a non-context-backed candidate as
 /// unproven until a cheap reachability probe confirms it, and must rank
 /// context-backed candidates ahead of merely-probed ones.
+///
+/// [capabilities] (live-probe follow-up: a Facebook video whose 6 resolved
+/// formats were all wrongly assumed muxed, downloading video-only or
+/// audio-only DASH renditions and failing ffprobe verification every
+/// time) carries a positive video/audio reading through from a
+/// `JsonMediaCandidate`'s own sibling `mimeType`/`type`/`codecs` (see its
+/// doc). Null when no source gave a decisive answer - `GenericExtractor`/
+/// `FormatExpander` fall back to URL-embedded signals (Facebook's `efg`
+/// query param) or the safe muxed default from there.
 class SniffedMedia {
   final String url;
   final String container;
@@ -37,6 +47,7 @@ class SniffedMedia {
   final int? height;
   final int? bitrate;
   final bool contextBacked;
+  final FormatCapabilities? capabilities;
 
   const SniffedMedia({
     required this.url,
@@ -45,11 +56,12 @@ class SniffedMedia {
     this.height,
     this.bitrate,
     this.contextBacked = false,
+    this.capabilities,
   });
 
   @override
-  String toString() =>
-      'SniffedMedia($container, $url, ${width}x$height, bitrate: $bitrate, contextBacked: $contextBacked)';
+  String toString() => 'SniffedMedia($container, $url, ${width}x$height, bitrate: $bitrate, '
+      'contextBacked: $contextBacked, capabilities: $capabilities)';
 }
 
 /// Result of one sniff pass over a page's HTML.

@@ -3,6 +3,12 @@ import 'dart:io';
 
 import '../media_models.dart';
 
+/// Policy note (`docs/plan-phase5-coverage.md` Lane D review round 2):
+/// this reproduces Bilibili's own public web-player request contract
+/// (the same cookie-bootstrap endpoint its player calls on first load).
+/// No challenge solving, no fingerprint spoofing. If Bilibili changes
+/// this contract, this stops working and we stop - we do not evade.
+///
 /// Fetches the anonymous `buvid3`/`buvid4` device-id cookies Bilibili's
 /// WAF expects on every request to `*.bilibili.com`
 /// (`x/frontend/finger/spi`, a public, unauthenticated, no-login-required

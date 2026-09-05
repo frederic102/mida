@@ -10,6 +10,7 @@ import 'browser_process_tree.dart';
 import 'browser_profile.dart';
 import 'browser_temp_cleanup.dart';
 import 'cdp_client.dart';
+import 'child_target_resumer.dart';
 import 'interactive_session_detector.dart';
 
 /// The surface `BrowserCaptureExtractor` needs from a live DevTools
@@ -197,20 +198,25 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     }
   }
 
-  /// Kills [process] and waits for it to actually exit (escalating to
-  /// `SIGKILL` and waiting again, briefly, if it does not exit within
-  /// [timeout]) before returning, then sweeps [BrowserProcessTree] over its
-  /// pid (a Windows child renderer/GPU process does not die with its
-  /// parent on its own - see that class). Exposed (not private) so tests
-  /// can drive it directly against a fake `Process` without needing a real
-  /// OS process; production code only reaches it via [launch]'s failure
-  /// path and [close]. [processTreeKiller] is a test-only override for
+  /// Sweeps [BrowserProcessTree] over [process]'s own pid *first* - while
+  /// the parent is still alive - then kills [process] itself and waits
+  /// for it to exit (escalating to `SIGKILL`, waiting again, if it does
+  /// not within [timeout]). Exposed so tests can drive it directly against
+  /// a fake `Process`; production reaches it via [launch]'s failure path
+  /// and [close]. [processTreeKiller] test-overrides
   /// [BrowserProcessTree.kill]'s own `runner` (never set in production).
+  ///
+  /// Order matters (independent review round 2): `taskkill /T` walks the
+  /// *live* tree rooted at a pid - once the parent has already exited (as
+  /// calling this the other way around left it), Windows can no longer
+  /// reliably attribute child renderer/GPU processes to it, orphaning them
+  /// instead of killing them.
   static Future<void> killAndAwaitExit(
     Process process, {
     Duration timeout = const Duration(seconds: 5),
     Future<ProcessResult> Function(String executable, List<String> arguments)? processTreeKiller,
   }) async {
+    await BrowserProcessTree.kill(process.pid, runner: processTreeKiller);
     try {
       process.kill();
       await process.exitCode.timeout(
@@ -228,7 +234,6 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       // Best-effort: if even querying exitCode throws, there is nothing
       // further to synchronize on before the caller attempts its delete.
     }
-    await BrowserProcessTree.kill(process.pid, runner: processTreeKiller);
   }
 
   /// Does the target-attach + domain-enable + child-target auto-attach
@@ -275,7 +280,7 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     // Lane A hardening: pauses every request this target makes so
     // PrivateDestinationGuard can fail one bound for a disallowed host
     // before it ever leaves the machine - see that file's own docstring.
-    await session.send('Fetch.enable', _fetchEnableParams);
+    await session.send('Fetch.enable', ChildTargetResumer.fetchEnableParams);
 
     // Must be wired before `Target.setAutoAttach` is requested: Chrome can
     // fire `Target.attachedToTarget` for an already-loading child target
@@ -283,13 +288,18 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     // that call could lose the very first one.
     session._autoAttachSubscription = cdp.events.listen((event) => session._onCdpEvent(event));
 
-    // `waitForDebuggerOnStart: false`: child targets (iframes) start
-    // running immediately on attach rather than pausing for us to call
-    // `Runtime.runIfWaitingForDebugger`, so there is no matching call to
-    // make here for that flag.
+    // `waitForDebuggerOnStart: true`: a child target (iframe) is paused
+    // the instant it attaches, running nothing at all - no script, no
+    // request - until we explicitly resume it in [_onCdpEvent], after
+    // `Fetch`/`Network` are already enabled on its own session. Without
+    // this, a child could fire its first request(s) in the window between
+    // attach and our own async `Fetch.enable` landing, and
+    // `PrivateDestinationGuard` would never even see them (independent
+    // review round 2: a real gap in the guard, not just a theoretical
+    // one).
     await session.send('Target.setAutoAttach', const {
       'autoAttach': true,
-      'waitForDebuggerOnStart': false,
+      'waitForDebuggerOnStart': true,
       'flatten': true,
     });
 
@@ -301,24 +311,11 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     final childSessionId = event.params['sessionId'] as String?;
     if (childSessionId == null || !_attachedSessionIds.add(childSessionId)) return;
     _childSessionIds.add(childSessionId);
-    unawaited(() async {
-      try {
-        await _cdp.send('Network.enable', sessionId: childSessionId);
-        await _cdp.send('Fetch.enable', params: _fetchEnableParams, sessionId: childSessionId);
-      } catch (_) {
-        // A child target that closes before we finish enabling Network on
-        // it just never contributes events; that is not a capture failure
-        // on its own (other targets, or this one on a later attach, may
-        // still supply the media).
-      }
-    }());
-  }
 
-  static const Map<String, dynamic> _fetchEnableParams = {
-    'patterns': [
-      {'urlPattern': '*'}
-    ],
-  };
+    final targetInfo = event.params['targetInfo'];
+    final targetType = targetInfo is Map ? targetInfo['type'] as String? : null;
+    unawaited(ChildTargetResumer.handle(_cdp, childSessionId, targetType: targetType));
+  }
 
   static Future<String> _pollForWebSocketUrl(int port, Duration timeout) async {
     final deadline = DateTime.now().add(timeout);

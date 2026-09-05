@@ -152,7 +152,18 @@ void main() {
       session = FakeDevtoolsSession(
         onSend: (method, params) async {
           if (method == 'Page.navigate') {
+            // MainDocumentStatusTracker latches its requestId from a
+            // matching (type: Document, same URL) requestWillBeSent
+            // first - a bare responseReceived alone (the pre-fix shape)
+            // no longer sets the status on its own.
+            session.emit('Network.requestWillBeSent', {
+              'requestId': 'main-request',
+              'type': 'Document',
+              'request': {'url': 'https://example.com/gone'},
+            });
             session.emit('Network.responseReceived', {
+              'requestId': 'main-request',
+              'type': 'Document',
               'response': {'url': 'https://example.com/gone', 'mimeType': 'text/html', 'status': 404},
             });
             return {};

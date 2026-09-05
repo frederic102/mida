@@ -4,6 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/download/hls_ffmpeg_downloader.dart';
 import 'package:mida/core/extractors/media_models.dart';
 
+/// A fixed public IP for every hostname this file's fixtures use
+/// (`cdn.example.invalid`, ...) - keeps the manifest scanner's leaf DNS-
+/// answer check (see `manifest_reference_scanner.dart`) from depending on
+/// whatever this sandbox's real DNS resolver happens to answer for a
+/// `.invalid` hostname (guaranteed NXDOMAIN by RFC 2606, which would
+/// otherwise fail this fail-closed check even for a 'clean' fixture).
+Future<List<InternetAddress>> _fakePublicResolver(String host) async => [InternetAddress('93.184.216.34')];
+
 /// Covers `HlsFfmpegDownloader.downloadVerified`'s manifest/segment host
 /// check (SSRF hardening) - split out of `hls_ffmpeg_downloader_test.dart`
 /// to keep both files under the 400-line cap. See
@@ -23,7 +31,10 @@ void main() {
     });
 
     test('a manifest whose own host is private/loopback is refused without ever fetching it', () async {
-      final downloader = HlsFfmpegDownloader(ffmpegPathResolver: () async => 'irrelevant.exe');
+      final downloader = HlsFfmpegDownloader(
+        ffmpegPathResolver: () async => 'irrelevant.exe',
+        resolveHost: _fakePublicResolver,
+      );
       await expectLater(
         downloader.downloadVerified(url: 'http://127.0.0.1:9/master.m3u8', outputPath: '${tempDir.path}/out.mp4'),
         throwsA(isA<MediaExtractionException>()),
@@ -48,6 +59,7 @@ void main() {
         // segment line is a distinct check that must still fire.
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => 'irrelevant.exe',
         );
         await expectLater(
@@ -78,6 +90,7 @@ void main() {
       try {
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => throw StateError('should not reach ffmpeg in this test'),
         );
         // The host check must pass silently (the segment is never
@@ -92,6 +105,39 @@ void main() {
           ),
           throwsA(isA<StateError>()),
         );
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('guard-can-fail: a media playlist referencing a syntactically-public segment host whose DNS answer '
+        'is 10.0.0.1 (rebinding) is rejected', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        request.response.headers.contentType = ContentType('application', 'vnd.apple.mpegurl');
+        request.response.write('#EXTM3U\n#EXTINF:10,\nhttps://looks-public.example.test/segment.ts\n');
+        await request.response.close();
+      });
+
+      try {
+        final downloader = HlsFfmpegDownloader(
+          allowPrivateHosts: true,
+          ffmpegPathResolver: () async => 'irrelevant.exe',
+          resolveHost: (host) async => [InternetAddress('10.0.0.1')],
+        );
+        await expectLater(
+          downloader.downloadVerified(
+            url: 'http://127.0.0.1:${server.port}/media.m3u8',
+            outputPath: '${tempDir.path}/out.mp4',
+          ),
+          throwsA(isA<MediaExtractionException>().having((e) => e.reason, 'reason', contains('10.0.0.1'))),
+        );
+        // Guard can fail (see report): temporarily skipping the leaf
+        // DNS-answer check (only running `HostPolicy.assertAllowedHost`,
+        // the syntactic one) made this test fail - `downloadVerified`
+        // proceeded straight to `run`, which then threw for the unrelated
+        // reason of `irrelevant.exe` not being a real ffmpeg binary,
+        // instead of the expected `MediaExtractionException`.
       } finally {
         await server.close(force: true);
       }
@@ -117,6 +163,7 @@ void main() {
         try {
           final downloader = HlsFfmpegDownloader(
             allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
             ffmpegPathResolver: () async => 'irrelevant.exe',
           );
           await expectLater(
@@ -157,6 +204,7 @@ void main() {
       try {
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => 'irrelevant.exe',
         );
         await expectLater(
@@ -192,6 +240,7 @@ void main() {
       try {
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => throw StateError('should not reach ffmpeg in this test'),
         );
         await expectLater(
@@ -221,6 +270,7 @@ void main() {
       try {
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => 'irrelevant.exe',
         );
         await expectLater(
@@ -254,6 +304,7 @@ void main() {
       try {
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => throw StateError('should not reach ffmpeg in this test'),
         );
         await expectLater(
@@ -279,6 +330,7 @@ void main() {
       try {
         final downloader = HlsFfmpegDownloader(
           allowPrivateHosts: true,
+          resolveHost: _fakePublicResolver,
           ffmpegPathResolver: () async => 'irrelevant.exe',
         );
         await expectLater(

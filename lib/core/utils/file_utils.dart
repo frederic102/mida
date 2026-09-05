@@ -82,6 +82,37 @@ class FileUtils {
     return result;
   }
 
+  /// Total path length this app keeps every final output path under,
+  /// comfortably below Windows' ~260-character `MAX_PATH` (many Win32
+  /// APIs, and some antivirus/indexer hooks, get unreliable well before
+  /// the literal limit) - live-caught (coordinator repro, coverage probe):
+  /// a `PathAccessException` on the final rename for a long page title
+  /// combined with a long output directory.
+  static const int maxTotalPathLength = 240;
+
+  /// Trims [baseName] further - on top of whatever [sanitizeFileName]
+  /// already did to it - so the eventual full path ([outputDir] + a path
+  /// separator + [baseName] + an extension, plus headroom for
+  /// [getUniqueFilePath]'s own possible `" (N)"` collision suffix) stays
+  /// under [maxTotalLength]. A long page title (a verbose podcast/news
+  /// headline, common enough on real sites) combined with a long output
+  /// directory is exactly the shape that produced a live
+  /// `PathAccessException` this trims away at the source rather than
+  /// leaving to a rename-time failure.
+  static String fitBaseNameToPath(String outputDir, String baseName, {int maxTotalLength = maxTotalPathLength}) {
+    // Reserves room for the path separator, a generously-sized extension
+    // (".mp4"/".webm"/".mkv"/...), and " (N)" - not exact, just a safe
+    // fixed headroom rather than threading the real extension/suffix
+    // through every call site that needs this.
+    const reserveForSeparatorExtensionAndSuffix = 24;
+    final budget = maxTotalLength - outputDir.length - reserveForSeparatorExtensionAndSuffix;
+    if (budget <= 0) return '_';
+    if (baseName.length <= budget) return baseName;
+
+    final trimmed = _stripTrailingDotsAndSpaces(_truncateAtRuneBoundary(baseName, budget));
+    return trimmed.isEmpty ? '_' : trimmed;
+  }
+
   /// Truncates [value] to at most [maxCodeUnits] UTF-16 code units without
   /// ever splitting a surrogate pair: an emoji or other astral-plane
   /// character that would land exactly on the cut boundary is dropped

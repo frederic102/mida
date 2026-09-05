@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../browser_capture/format_capabilities.dart';
 import 'inline_json_scanner.dart';
 import 'media_url_probe.dart';
 import 'meta_tag_scanner.dart';
@@ -119,7 +120,14 @@ class HtmlMediaSniffer {
     // only ever goes false -> true on an upgrade, never true -> false: once
     // any source vouches for a URL, a later metadata-less mention of the
     // same URL must not un-vouch for it.
-    void addCandidate(String? rawUrl, {int? width, int? height, int? bitrate, bool contextBacked = false}) {
+    void addCandidate(
+      String? rawUrl, {
+      int? width,
+      int? height,
+      int? bitrate,
+      bool contextBacked = false,
+      FormatCapabilities? capabilities,
+    }) {
       if (rawUrl == null || rawUrl.isEmpty) return;
       final classified = _classify(rawUrl, baseUrl);
       if (classified == null) return;
@@ -132,6 +140,7 @@ class HtmlMediaSniffer {
           height: existing.height ?? height,
           bitrate: existing.bitrate ?? bitrate,
           contextBacked: existing.contextBacked || contextBacked,
+          capabilities: existing.capabilities ?? capabilities,
         );
         return;
       }
@@ -143,6 +152,7 @@ class HtmlMediaSniffer {
         height: height,
         bitrate: bitrate,
         contextBacked: contextBacked,
+        capabilities: capabilities,
       );
     }
 
@@ -215,6 +225,7 @@ class HtmlMediaSniffer {
         height: candidate.height,
         bitrate: candidate.bitrate,
         contextBacked: candidate.contextBacked,
+        capabilities: candidate.capabilities,
       );
     }
 

@@ -1,5 +1,63 @@
 # Changelog
 
+## [2.2.0] - 2026-09-06
+
+### Added
+- Native extractors for 11 more sites: Naver TV, CHZZK (VOD), Kakao TV
+  (the public service has ended; the extractor still recognizes the URL
+  and returns a clean, specific error instead of falling through to a
+  browser capture that could never succeed), Dailymotion, Twitch (VOD and
+  clips), Reddit (v.redd.it DASH), SoundCloud, Bilibili, Douyin, Niconico
+  and Odysee. Combined with YouTube, X, TikTok and Instagram from 2.0.0,
+  MiDa now has 15 native platform extractors; see
+  [docs/supported-sites.md](docs/supported-sites.md) for the full list and
+  what is still out of scope (DRM, most login-only or age-gated content,
+  live streams).
+- Browser capture now launches the system browser headed and off-screen
+  by default (headless only as a fallback, for example a non-interactive
+  session), because several anti-bot layers were found to fingerprint and
+  block a `--headless` browser outright. It also dismisses consent and
+  age-gate overlays before trying to start playback, tries several common
+  play-button selectors and a center-of-player click, polls longer for the
+  first media request, backfills from the page's own
+  `performance.getEntriesByType('resource')` list, and can reconstruct a
+  missing HLS/DASH manifest by probing sibling paths when only media
+  segment URLs were observed.
+- A "Use browser login session" toggle in Settings (off by default) lets
+  MiDa reuse your own signed-in Edge or Chrome session for sign-in-only
+  videos, by staging a cookie-only copy of your real browser profile. It
+  never reads, decrypts, or holds a cookie value itself, and never touches
+  saved passwords, history, or bookmarks.
+- Retry with backoff for transient failures (rate limiting, momentary
+  network or server errors); a failure the source reports as permanent
+  (not found, private, DRM-protected, and similar) is not retried.
+
+### Changed
+- Generic page analysis now also parses inline JSON state blobs
+  (`__NEXT_DATA__`, `__INITIAL_STATE__`, `__NUXT__`, `__APOLLO_STATE__`),
+  follows an oEmbed link when present, and reads common `data-*` video
+  attributes, which recovers resolution metadata for several sites that
+  previously returned a format with no known quality.
+- DRM detection now also inspects the body of an HLS or DASH manifest for
+  encryption signals (Widevine, PlayReady, FairPlay), not just the
+  candidate URL's own text, so a clean-looking manifest URL that is
+  actually DRM-protected is caught before it is offered as downloadable.
+- Generic analysis now caps total outbound requests, resource size, and
+  recursion depth per page, so a single page cannot make MiDa fetch an
+  unbounded number of embeds or an unbounded amount of data.
+- Downloads now accept an HTTP 200 in addition to 206 on a ranged request
+  (some hosts ignore the `Range` header and return the whole file), and
+  every redirect hop and DNS answer is re-checked against the same
+  private-network guard as the original URL, closing a path where a
+  redirect or a DNS answer could point at a loopback or internal address.
+- Cookies sent with a download request are now scoped per domain
+  (respecting the `secure` flag) instead of one blanket header sent to
+  every host a download touches.
+- A TLS handshake failure caused by a certificate this system does not
+  trust (observed on some CDNs) now surfaces a specific message explaining
+  that MiDa will not bypass certificate verification, instead of a raw
+  exception or an unexplained retry loop.
+
 ## [2.0.0] - 2026-09-05
 
 ### Changed

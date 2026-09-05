@@ -28,12 +28,6 @@ class _FixedResponseServer {
   Uri get baseUri => Uri(scheme: 'http', host: '127.0.0.1', port: server.port);
 
   Future<void> _handle(HttpRequest request) async {
-    if (request.uri.path == '/integrity') {
-      request.response.statusCode = 200;
-      request.response.write(jsonEncode({'token': 'fake-integrity-token'}));
-      await request.response.close();
-      return;
-    }
     request.response.statusCode = statusCode;
     request.response.write(body);
     await request.response.close();
@@ -114,11 +108,15 @@ void main() {
       );
     });
 
-    test('maps a page 404 to NOT_FOUND', () async {
+    test('maps a page 404 to NETWORK (fall-through eligible), not terminal NOT_FOUND', () async {
+      // Guard-can-fail: a bare 404 here must not be trusted as
+      // authoritative - Twitch's real watch page answers 200 even for a
+      // nonexistent VOD id (see TwitchExtractor._fetchPageMeta's doc), so
+      // a 404 is more likely an intermediary/WAF than Twitch itself.
       pageServer.statusCode = 404;
       await expectLater(
         buildExtractor().extract(Uri.parse('https://www.twitch.tv/videos/999')),
-        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NOT_FOUND')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NETWORK')),
       );
     });
   });

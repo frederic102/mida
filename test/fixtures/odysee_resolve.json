@@ -1,0 +1,37 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "lbry://@lbry#3f/odysee#7": {
+      "claim_id": "7a416c44a6888d94fe045241bbac055c726332aa",
+      "name": "odysee",
+      "normalized_name": "odysee",
+      "signing_channel": {
+        "claim_id": "3fda836a92faaceedfe398225fb9b2ee2ed1f01a",
+        "name": "@lbry"
+      },
+      "type": "claim",
+      "value": {
+        "description": "Big thanks to @MH for this",
+        "source": {
+          "hash": "0c416deb60377121e37bddabeea93398243e8507753868e33e57cacc0f131cadb91020a5e01aa49a1034dcc04f2ef5dc",
+          "media_type": "video/mp4",
+          "name": "223264816_odyseepromo.mp4",
+          "sd_hash": "a27e60ccaef16af441d76471f87d211a1791cc580d2b1dc333f81bab67dca8fa9bfea900bcf25da5a6585857240967b1",
+          "size": "44532814"
+        },
+        "stream_type": "video",
+        "thumbnail": {
+          "url": "https://spee.ch/6/c10a143c7372d48c.jpg"
+        },
+        "title": "Introducing Odysee: A Short Video",
+        "video": {
+          "duration": 143,
+          "height": 1080,
+          "width": 1920
+        }
+      },
+      "value_type": "stream"
+    }
+  },
+  "id": 0
+}

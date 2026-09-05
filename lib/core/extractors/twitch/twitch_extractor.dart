@@ -177,12 +177,20 @@ class TwitchExtractor implements MediaExtractor {
       request.headers.set('User-Agent', _userAgent);
       final response = await request.close();
       final html = await response.transform(utf8.decoder).join();
-      if (response.statusCode == 404) {
-        throw const MediaExtractionException(
-          'NOT_FOUND',
-          'This Twitch VOD no longer exists or the link is wrong.',
-        );
-      }
+      // No dedicated 404 -> NOT_FOUND branch: live-checked 2026-09-06
+      // (`docs/plan-phase5-coverage.md` Lane D review round 2) that
+      // Twitch's watch page answers HTTP 200 for a definitely-nonexistent
+      // VOD id too (client-side routing - the server never 404s this
+      // path), with a bare shell page (`<title>Twitch</title>`, no
+      // `og:` tags at all). A 404 status here would only ever come from
+      // an intermediary (WAF/proxy) synthesizing one, not Twitch itself,
+      // so it must not be treated as more authoritative than any other
+      // non-200 - NETWORK (fall-through eligible) for all of them.
+      // "This VOD does not exist" is instead signaled by the *absence* of
+      // `og:title` etc, which `TwitchPageMetaParser.parse` already
+      // tolerates (falls back to nulls) rather than throwing - the real
+      // terminal signal for a missing VOD is `videoPlaybackAccessToken`
+      // being null later in `_extractVod`, already `CHALLENGE_FAILED`.
       if (response.statusCode != 200) {
         throw MediaExtractionException(
           'NETWORK',

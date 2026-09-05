@@ -23,7 +23,7 @@
 
 ## Features
 
-- **Video Download** - YouTube, Twitter/X, Instagram, TikTok and more
+- **Video Download** - YouTube, Twitter/X, Instagram, TikTok and 11 more native platforms, plus most other video sites via page analysis and browser capture (see [Supported Sites](docs/supported-sites.md))
 - **Audio Download** - Extract audio in MP3, M4A, FLAC, WAV, Opus
 - **Video Compression** - Two-pass encoding with target file size (presets or custom)
 - **Audio Extraction** - Extract audio tracks from local video files
@@ -38,7 +38,7 @@ Go to [**Releases**](https://github.com/frederic102/mida/releases/latest) and do
 | Windows | `MiDa_Setup_v*.exe` | Windows 10+ |
 | macOS | `MiDa.dmg` | macOS 11+ |
 
-FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok and Instagram natively. Other sites are handled by generic page analysis and, when needed, a headless copy of your installed Microsoft Edge or Google Chrome. DRM-protected and login-only content is not supported. Set `MIDA_BROWSER_PATH` to override the detected browser location.
+FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok, Instagram and more natively; see [Supported Sites](docs/supported-sites.md) for the full list. Other sites are handled by generic page analysis and, when needed, a real off-screen window of your installed Microsoft Edge or Google Chrome (headless only as a fallback, for example on a machine with no interactive session). DRM-protected content, live streams, and most login-only or age-gated content are not supported; see [Supported Sites](docs/supported-sites.md) for the exceptions. Set `MIDA_BROWSER_PATH` to point at a specific browser install, and turn on "Use browser login session" in Settings to let MiDa reuse your own signed-in browser session for sign-in-only videos (off by default).
 
 ## Building from Source
 
@@ -80,8 +80,8 @@ flutter run -d windows   # or: flutter run -d macos
 | Component | Role |
 |-----------|------|
 | [Flutter](https://flutter.dev) | Cross-platform desktop UI |
-| Native extractors | YouTube, X (Twitter), TikTok, Instagram, generic page analysis |
-| Microsoft Edge / Google Chrome (headless, user-installed) | Fallback capture for sites the generic analysis cannot parse |
+| Native extractors | YouTube, X (Twitter), TikTok, Instagram and 11 more (see [Supported Sites](docs/supported-sites.md)), plus generic page analysis |
+| Microsoft Edge / Google Chrome (off-screen window, user-installed) | Fallback capture for sites the generic analysis cannot parse; headless only if a real window cannot launch |
 | [FFmpeg](https://ffmpeg.org) | Media encoding and processing |
 
 ## Contributing

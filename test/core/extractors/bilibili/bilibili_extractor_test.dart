@@ -108,6 +108,17 @@ void main() {
       );
     });
 
+    test('maps HTTP 404 on the page to NETWORK (fall-through eligible), not terminal NOT_FOUND', () async {
+      // Guard-can-fail: Bilibili's real watch page answers 200 even for a
+      // nonexistent BV id (see BilibiliPageParser's doc), so a bare 404
+      // is more likely a WAF/proxy synthesizing one than Bilibili itself.
+      pageServer.statusCode = 404;
+      await expectLater(
+        buildExtractor().extract(Uri.parse('https://www.bilibili.com/video/BV1GJ411x7h7')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NETWORK')),
+      );
+    });
+
     test('propagates LOGIN_REQUIRED from the playurl API', () async {
       pageServer.body = await File('test/fixtures/bilibili_initial_state.html').readAsString();
       playurlServer.body = jsonEncode({'code': -403, 'message': 'login required'});

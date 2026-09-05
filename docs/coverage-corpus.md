@@ -1,47 +1,115 @@
-# Coverage Corpus (verified 2026-09-05)
+# Coverage Corpus (updated 2026-09-06)
 
-Verification method: one GET per candidate (desktop Chrome UA, curl -L, 20s timeout,
-max 3 candidates per site). "og/json hint" = og:video, .m3u8/.mpd/.mp4 string, or an
-embedded JSON blob with the real title/videoId seen directly in the curl response body.
+This corpus is the exact 32 URLs in
+`test/live/lead_coverage_probe_test.dart`'s `sites` map. That test is the
+single source of truth for which URLs count; this document explains what
+each one is and what tier of MiDa handles it. If a URL here does not match
+that file, the test file wins and this document is stale.
 
-| Site key | URL | HTTP + content check | og/json hint (no-browser) | Note |
-|---|---|---|---|---|
-| rumble | https://rumble.com/v4yo3oo-real-americas-voice-247.html | 307 redirect loop to itself, never resolves | none reached | Cloudflare bot challenge blocks curl. Needs real browser/JS. |
-| odysee | https://odysee.com/@lbry:3f/odysee:7 | 200, title "Introducing Odysee: A Short Video" | title present in HTML | Official lbry channel video, works without browser. |
-| bandcamp | https://booelectric.bandcamp.com/track/want-for-nothing | 403 Forbidden (3 candidates, incl. extra headers) | none, blocked | Fastly WAF blocks curl/bot UA site-wide. Needs browser. |
-| twitch vod | https://www.twitch.tv/shroud/videos | 200, but body is empty React SPA shell (no VOD id/title in HTML) | none | Big streamer's real channel page; individual VOD id needs JS. Needs browser. |
-| twitch clip | https://clips.twitch.tv/AnimatedOptimisticWasabiVoteNay | 200, generic `<title>Twitch</title>` | none | SPA shell, same as VODs. Needs browser. |
-| kuaishou | https://www.kuaishou.com/short-video/3xhf4kv5ahrt8cy | 200, generic default title "短视频-快手" | none | Page renders client-side; could not confirm this id is a live video without JS. Needs browser. |
-| weibo | https://weibo.com/tv/show/1034:5080340418793999 | 200, but title is "Sina Visitor System" | none, anti-bot wall | Weibo serves a visitor-verification page to non-browser clients. Needs browser/session. |
-| xiaohongshu | https://www.xiaohongshu.com/discovery/item/67669f850000000013000451 | 200, title "你访问的页面不见了" (page is gone) | none | Bare ids without a valid xsec_token share link 404. Needs browser + real share link. |
-| youku | https://v.youku.com/v_show/id_XNDI5ODI5NTQzNg==.html | 200, real Chinese documentary title | og:video present, videoId in body | Works without browser. |
-| vk | https://vk.com/video-30558759_456239017 | HTTP 418 (deliberate bot-block status) | none | VK blocks non-browser clients outright. Needs browser. |
-| ok.ru | https://ok.ru/video/14543307672246 | 200, og:title "2026" | og:video + og:video:url present | Works without browser. |
-| pinterest | https://www.pinterest.com/pin/617415430169271912/ | 200, real pin page, title "Midland country band..." | no og:video found | Pin is real but not confirmed as a video-type pin; video metadata is JS-rendered. Needs browser to confirm/pick a video pin. |
-| likee | https://likee.video/@Likee_official | 200, generic title "Likee - Short Video Community" | none | Empty SPA shell, no server-rendered links. Needs browser. |
-| naver (blog) | https://blog.naver.com/PostList.naver?blogId=naver_diary | 200, real title "네이버 공식블로그" | 12 hits of video/player strings in body | Real official blog with video posts; a single post permalink was not isolated without a browser click-through. Note: tv.naver.com (Naver TV) is scheduled to shut down 2026-09-30, avoid that domain for a durable case. |
-| dailymotion | https://www.dailymotion.com/video/x3j0j89 | 200, embedded JSON title "Top 5 Dailymotion Channels" | JSON title present, no og:video meta match | Confirms real video page; full og:video meta is JS-rendered. Partial no-browser confirmation. |
-| tiktok | https://www.tiktok.com/@tiktok | 200, body is a SlardarWAF "Please wait..." challenge page | none | WAF challenge blocks curl outright. Needs browser. |
-| ted | https://www.ted.com/talks/simon_sinek_how_great_leaders_inspire_action | 200, og:title "How great leaders inspire action" | og:title present | Works without browser. |
-| coub | https://coub.com/view/3dl4uh | 200, title "In a live-action clip, a white cat..." | og:video with direct .mp4 URL | Works without browser. |
-| imgur | https://imgur.com/t/gifs | 200, title "Imgur: The magic of the Internet" but body is empty React shell | none | No server-rendered gallery/video links found within 3-candidate budget. Needs browser. |
-| facebook watch | https://www.facebook.com/NatGeoAnimals/videos/reindeer-national-geographic/371360365972647/ | 200, og:title present, description present | og:type "video.other", oembed_video link present | Works without browser. Facebook Watch (the dedicated tab) was discontinued April 2023; canonical URL now redirects to /reel/, but this public video URL itself still resolves. |
-| tumblr | https://staff.tumblr.com/post/70425851417 | 200, title "Tumblr Staff - When was the last time..." | title present | Works without browser. |
-| nytimes | https://www.nytimes.com/video/multimedia/100000004703252/stephen-jones-talks-top-hats.html | 403 Forbidden (also tried /video listing page) | none, blocked | Bot-protection blocks curl. Needs browser. |
-| bbc news | https://www.bbc.co.uk/news/videos/cz7z93zde3po | 200, og:title "Watch: US man struck by lightning..." | og:title + JSON-LD VideoObject present | Works without browser. |
-| streamable | https://streamable.com/moo | 200, title "Watch \"Please don't eat me!\" \| Streamable" | og:video/.mp4 hint present | Works without browser. |
-| archive.org | https://archive.org/details/BigBuckBunny_124 | 200, title "Big Buck Bunny : Free Download, Borrow, and Streaming" | title present | Works without browser. |
-| w3schools | https://www.w3schools.com/html/mov_bbb.mp4 | 200, direct .mp4 file (788KB) | n/a (raw media file) | Works without browser, not an HTML page. |
-| vimeo | https://vimeo.com/22439234 | 200, og:title and og:type present | og:title/og:image/og:type present, no og:video | Works without browser. |
-| nicovideo | https://www.nicovideo.jp/watch/sm9 | 200, og:title with full Japanese title | og:video, og:video:url, JSON-LD VideoObject all present | Works without browser. |
+## Verification criterion
 
-## Summary of sites needing a real browser (curl blocked or SPA shell)
+Run with `MIDA_LIVE=1 flutter test test/live/lead_coverage_probe_test.dart`.
+For each URL, in order:
 
-rumble, bandcamp, twitch (both vod and clip), kuaishou, weibo, xiaohongshu, vk,
-pinterest (to confirm video type), likee, tiktok, imgur, nytimes.
+1. **Resolve** - `ExtractorRegistry.resolveInfo(url)`, 90s timeout, through
+   whichever tier actually handles that site (native extractor, generic
+   analysis, or browser capture fallback).
+2. **Range check** - a `GET` on the first resolved format URL with
+   `Range: bytes=0-1023`, confirming the host actually serves media (not
+   just that MiDa parsed a URL out of a page).
+3. **Download + ffprobe** - only if step 2 returns HTTP 200 or 206: a real
+   download through the production `MediaDownloadPipeline` (480p mp4
+   target) into a temp directory, then `ffprobe` confirms the output file
+   has at least one real video or audio stream.
 
-## Sites that work fully via curl (no browser needed)
+A site counts as covered only if all three steps succeed end to end (the
+test's `ok` counter). Resolving formats but failing the download or
+ffprobe check does not count.
 
-odysee, youku, ok.ru, ted, coub, facebook watch, tumblr, bbc news, streamable,
-archive.org, w3schools, vimeo, nicovideo. dailymotion is a partial case (base
-JSON confirms real content, full og:video meta needs a browser).
+**Last measured aggregate** (per the `v2.2 coverage` commit message,
+2026-09-06): 25/32 resolve formats, 20/32 complete the full
+resolve-plus-download-plus-ffprobe criterion above. That commit did not
+record a per-site pass/fail breakdown, so the table below documents what
+each URL is and which tier handles it, not a claim about which specific
+32 passed. Rerunning the command above prints one `OK`/`FAIL`/`ERR` line
+per site (with format count, resolved heights, and range/download result)
+plus the aggregate count; that live output is the source for a per-site
+breakdown, to be measured by the lead.
+
+## Corpus
+
+| Site key | URL | Tier | Note |
+|---|---|---|---|
+| youtube | https://www.youtube.com/watch?v=dQw4w9WgXcQ | Native (YouTube) | |
+| twitter | https://twitter.com/captainamerica/status/719944021058060289 | Native (X/Twitter) | |
+| tiktok | https://www.tiktok.com/@hankgreen1/video/7047596209028074758 | Native (TikTok) | |
+| instagram | https://www.instagram.com/reel/Chunk8-jurw/ | Native (Instagram) | |
+| naver-tv | https://tv.naver.com/v/105228483 | Native (Naver TV) | Naver TV is scheduled to shut down 2026-09-30; this URL will stop working after that date regardless of MiDa. |
+| chzzk | https://chzzk.naver.com/video/14834019 | Native (CHZZK) | VOD id, not a live channel. |
+| dailymotion | https://www.dailymotion.com/video/x3j0j89 | Native (Dailymotion) | Page metadata resolves natively; the video CDN (`cdndirector.dailymotion.com` / `*.cf.dmcdn.net`) has a confirmed TLS-fingerprint-based block against this app's own HTTP client on some videos, separate from the extractor itself (see `docs/supported-sites.md`). |
+| twitch-vod | https://www.twitch.tv/videos/2863640137 | Native (Twitch) | |
+| twitch-clip | https://clips.twitch.tv/AnimatedOptimisticWasabiVoteNay | Native (Twitch) | |
+| reddit | https://www.reddit.com/r/aww/comments/1c0xhqk/ | Native (Reddit) | v.redd.it DASH manifest. |
+| soundcloud | https://soundcloud.com/rick-astley-official/never-gonna-give-you-up | Native (SoundCloud) | Audio only. |
+| bilibili | https://www.bilibili.com/video/BV1GJ411x7h7 | Native (Bilibili) | Live-test diagnosis on this id also uncovered and fixed a `ConcurrentModificationError` in the browser-capture manifest-recovery path used as its fallback; see `docs/plan-phase5-coverage.md`. |
+| douyin | https://www.douyin.com/video/7318947853764676900 | Native (Douyin) | The site's anti-bot layer is a JS-VM challenge that no plain HTTP client can solve by design; per `test/live/global_sites_live_test.dart`, this was not resolved within this pass's budget. |
+| niconico | https://www.nicovideo.jp/watch/sm9 | Native (Niconico) | Per `test/live/global_sites_live_test.dart`, current-site auth for this extractor was not resolved within this pass's budget. |
+| youku | https://v.youku.com/v_show/id_XNDI5ODI5NTQzNg==.html | Generic analysis | Works without a browser: `og:video` and a `videoId` are present directly in the HTML. |
+| weibo-video | https://weibo.com/tv/show/1034:5080340418793999 | Browser capture | Weibo serves a visitor-verification interstitial to non-browser clients; needs a real browser session. |
+| vk-video | https://vk.com/video-30558759_456239017 | Browser capture | VK returns HTTP 418 to non-browser clients. Real `video/mp4`/`audio/mp4` traffic was captured on `okcdn.ru` once a browser session was used; that host's mimeType-without-extension URLs previously fell through the classifier and were added as a fallback (see `docs/plan-phase5-coverage.md`). The download stage separately hit an untrusted-TLS-certificate failure on this CDN. |
+| ok-ru | https://ok.ru/video/14543307672246 | Generic analysis | Works without a browser: `og:video` and `og:video:url` are present. Shares the same untrusted-TLS-certificate CDN issue noted for vk-video. |
+| odysee | https://odysee.com/@lbry:3f/odysee:7 | Native (Odysee) | |
+| rumble | https://rumble.com/v2r1rw6-top-7-most-viewed-videos.html (swapped 2026-09-06: previous URL was a 24/7 live stream) | Browser capture | Cloudflare bot challenge blocks a plain HTTP request; needs a real browser. |
+| bandcamp | https://booelectric.bandcamp.com/track/want-for-nothing | Browser capture | A Fastly WAF blocks non-browser clients site-wide. `audio/mpeg` streams under an extension-less path (`mp3-128`) were previously dropped by the URL-extension check; fixed by trusting the server's own mimeType when the URL has no recognizable extension. |
+| pinterest | https://www.pinterest.com/pin/diy-pin-tutorial-video--41025046600764526/ (swapped 2026-09-06: native video pin) | Browser capture | Known limitation, not fixed this pass: in an anonymous session this pin URL redirects to a generic feed page and the pin id itself is lost, with no reliable page signal to detect that case without risking false positives on other pins. |
+| ted | https://www.ted.com/talks/simon_sinek_how_great_leaders_inspire_action | Generic analysis | Works without a browser: `og:title` present. |
+| coub | https://coub.com/view/3dl4uh | Generic analysis | Works without a browser: `og:video` points directly at an `.mp4`. |
+| facebook | https://www.facebook.com/NatGeoAnimals/videos/reindeer-national-geographic/371360365972647/ | Generic analysis | Works without a browser: `og:type` is `video.other` with an oembed_video link present. Facebook Watch (the dedicated tab) was discontinued in 2023; this direct video URL still resolves. |
+| tumblr | https://nasa.tumblr.com/post/616923388224667648 | Generic analysis | Swapped 2026-09-06: the previously listed staff post had no video (an anonymous-session redirect to the blog root, confirmed via live diagnosis, not a capture-engine bug). This nasa.tumblr.com post is the replacement. |
+| bbc-news | https://www.bbc.co.uk/news/videos/cz7z93zde3po | Generic analysis | Works without a browser: `og:title` plus a JSON-LD `VideoObject`. |
+| nytimes | https://www.nytimes.com/video/multimedia/100000004703252/stephen-jones-talks-top-hats.html | Browser capture | Bot protection returns 403 to a plain HTTP request; needs a real browser. |
+| streamable | https://streamable.com/moo | Generic analysis | Works without a browser: `og:video`/`.mp4` hint present. |
+| archive-org | https://archive.org/details/BigBuckBunny_124 | Generic analysis | Works without a browser. |
+| vimeo-public | https://vimeo.com/22439234 | Generic analysis | `og:title`/`og:type` present in the HTML; format resolution does not depend on a browser for this public video. |
+| w3schools-mp4 | https://www.w3schools.com/html/mov_bbb.mp4 | Generic analysis | A direct `.mp4` file, not an HTML page. |
+
+## Excluded (no verified single-video URL)
+
+These sites were investigated during coverage research but are not in the
+probe corpus above, because a single, durable, video-bearing URL could not
+be confirmed within the research budget (see git history of this file for
+the original per-site curl findings, October-dated entries now removed):
+
+- **kuaishou** - the candidate short-video id's page renders client-side
+  with only a generic title server-rendered; could not confirm it was a
+  live video without a browser.
+- **xiaohongshu** - a bare item id without a valid `xsec_token` share link
+  returns a "page not found" response.
+- **likee** - the candidate channel page is an empty client-rendered
+  shell with no server-rendered video links.
+- **imgur** - the candidate gallery page is an empty client-rendered
+  React shell within the research budget's candidate limit.
+- **naver (blog)** - a real official blog with video posts, but a single
+  post permalink was not isolated without a browser click-through; Naver
+  TV (`tv.naver.com`) is the durable single-video case used instead, and
+  is itself scheduled to shut down 2026-09-30.
+
+If a durable single-video URL for any of these is found later, add it to
+`test/live/lead_coverage_probe_test.dart`'s `sites` map first, then add a
+row here to match.
+
+## Final measurement (2026-09-06, lead, `MIDA_LIVE=1 flutter test test/live/lead_coverage_probe_test.dart`)
+
+Criterion: resolve, then a real pipeline download (480p mp4 or best audio), then ffprobe must
+report at least one stream. Result: 19 of 32 downloaded; 28 of 32 resolved formats.
+
+Downloaded: youtube, twitter, tiktok, instagram, naver-tv, chzzk, soundcloud, douyin, youku,
+odysee, rumble, bandcamp, coub, tumblr, bbc-news, nytimes, streamable, archive-org, w3schools.
+
+Resolved but not downloaded: dailymotion and twitch-vod (CDN answers 403 to non-browser TLS
+fingerprint or geo block), vk-video and ok-ru (CDN certificate not trusted by the OS; no bypass),
+niconico, pinterest, ted, facebook, vimeo (captured candidates are DASH/CMAF renditions whose
+init or audio pairing the pipeline could not complete; open follow-up).
+
+Not resolved: twitch-clip (anonymous GraphQL gated), reddit and bilibili (bot challenge), weibo
+(visitor wall). The browser login session toggle may help on those when the user is signed in.

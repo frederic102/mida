@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../extractors/media_models.dart';
 import '../net/host_policy.dart';
@@ -24,9 +25,13 @@ import '../net/host_policy.dart';
 ///    `#EXT-X-I-FRAME-STREAM-INF`/`#EXT-X-SESSION-KEY` `URI="..."`
 ///    attributes, DASH `BaseURL`/`SegmentURL`/`SegmentTemplate`/
 ///    `Location`/`ContentProtection` references) are always host-checked
-///    via [HostPolicy.assertAllowedHost], with **no** exemption - these
-///    are exactly the URLs ffmpeg would actually open next, which is the
-///    real SSRF surface this whole check exists to close.
+///    via [HostPolicy.assertAllowedHost] (syntactic) **and**
+///    [HostPolicy.assertResolvesToPublicHost] (DNS-answer, fail closed),
+///    with **no** exemption - these are exactly the URLs ffmpeg would
+///    actually open next, which is the real SSRF surface this whole check
+///    exists to close. A hostname that is syntactically public but whose
+///    DNS answer points at a private/loopback/link-local address (DNS
+///    rebinding) is refused the same as one that looks private outright.
 ///
 /// DASH (MPD XML) references are extracted with regex rather than a real
 /// XML parser (no new dependency). If the content cannot even be
@@ -64,6 +69,7 @@ class ManifestReferenceScanner {
     Uri url,
     Map<String, String> headers, {
     bool allowPrivateHosts = false,
+    Future<List<InternetAddress>> Function(String host) resolveHost = InternetAddress.lookup,
   }) async {
     final client = _httpClientFactory();
     try {
@@ -77,10 +83,28 @@ class ManifestReferenceScanner {
           useHead: false,
           configureRequest: (request) => headers.forEach(request.headers.set),
           allowPrivateHosts: allowPrivateHosts,
+          resolveHost: resolveHost,
         );
-        final text = await response.transform(utf8.decoder).join();
+        // Streamed and bounded WHILE reading (not just checked once the
+        // whole body has already been buffered): a compromised/misbehaving
+        // manifest host could otherwise exhaust memory by simply never
+        // ending the response body before this ever got a chance to stop.
+        final builder = BytesBuilder(copy: false);
+        var thisFetchBytes = 0;
+        await for (final chunk in response) {
+          thisFetchBytes += chunk.length;
+          if (bytesFetched + thisFetchBytes > maxBytes) {
+            throw const MediaExtractionException(
+              'PARSE_ERROR',
+              'This manifest exceeded the ${maxBytes ~/ (1024 * 1024)}MB size limit while being read; '
+                  'refusing rather than buffering an unbounded response body.',
+            );
+          }
+          builder.add(chunk);
+        }
+        final text = utf8.decode(builder.takeBytes());
         playlistsFetched++;
-        bytesFetched += text.length;
+        bytesFetched += thisFetchBytes;
         return text;
       }
 
@@ -119,8 +143,16 @@ class ManifestReferenceScanner {
         }
       }
 
+      // Deduplicated by host: a manifest routinely lists dozens of
+      // segments all on the same CDN host, and resolving each of them
+      // individually would multiply DNS lookups (and their latency, and
+      // their fail-closed risk on a flaky resolver) for zero extra safety.
+      final checkedHosts = <String>{};
       for (final uri in leafReferences) {
         HostPolicy.assertAllowedHost(uri, context: 'a segment/key/map referenced by this manifest');
+        if (checkedHosts.add(uri.host.toLowerCase())) {
+          await HostPolicy.assertResolvesToPublicHost(uri, resolveHost: resolveHost);
+        }
       }
       return leafReferences;
     } finally {

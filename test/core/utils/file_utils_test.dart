@@ -169,4 +169,50 @@ void main() {
       await FileUtils.openFileLocation('/tmp/whatever/file.txt');
     });
   });
+
+  group('FileUtils.fitBaseNameToPath', () {
+    // Live-caught (coordinator repro, coverage probe): a `PathAccessException`
+    // on the final rename for a long page title combined with a long output
+    // directory - this trims the base name so the combined path stays under
+    // the 240-char budget rather than leaving that to a rename-time failure.
+    test('a short base name under a short outputDir is left untouched', () {
+      expect(FileUtils.fitBaseNameToPath('/tmp/out', 'My Vacation Video'), 'My Vacation Video');
+    });
+
+    test('guard can fail: a base name that would push the combined path past the budget is trimmed', () {
+      final outputDir = '/tmp/${'d' * 100}'; // 105 chars
+      final longTitle = 'A' * 200;
+
+      final fitted = FileUtils.fitBaseNameToPath(outputDir, longTitle, maxTotalLength: 240);
+
+      expect(fitted.length, lessThan(longTitle.length));
+      // 240 total - 105 (outputDir) - 24 (reserved for separator/extension/suffix)
+      expect(fitted.length, 111);
+      expect('$outputDir/$fitted.mp4'.length, lessThanOrEqualTo(240),
+          reason: 'the real separator + extension are shorter than the reserved headroom, so the combined '
+              'path must clear the 240-char budget');
+    });
+
+    test('an outputDir so long it eats the entire budget falls back to a single-character name, not empty '
+        'or negative-length', () {
+      final outputDir = '/tmp/${'d' * 300}';
+      expect(FileUtils.fitBaseNameToPath(outputDir, 'anything'), '_');
+    });
+
+    test('a base name exactly at the budget boundary is left untouched (no off-by-one over-trim)', () {
+      const outputDir = '/tmp/out'; // 8 chars
+      // budget = 240 - 8 - 24 = 208
+      final exactlyAtBudget = 'A' * 208;
+      expect(FileUtils.fitBaseNameToPath(outputDir, exactlyAtBudget), exactlyAtBudget);
+    });
+
+    test('trimming never splits a surrogate pair (astral-plane characters, e.g. emoji, in the title)', () {
+      final outputDir = '/tmp/${'d' * 100}';
+      final emojiTitle = '\u{1F600}' * 200; // grinning face emoji, 2 UTF-16 code units each
+      final fitted = FileUtils.fitBaseNameToPath(outputDir, emojiTitle);
+      // Every code point in the fitted string must still be a complete,
+      // valid rune - String.runes throws on a dangling lone surrogate.
+      expect(() => fitted.runes.toList(), returnsNormally);
+    });
+  });
 }

@@ -13,6 +13,8 @@ class _FakeRedditServer {
   String listingBody = '[]';
   String dashBody = '<MPD></MPD>';
   int listingStatusCode = 200;
+  int dashStatusCode = 200;
+  String? listingContentType;
 
   _FakeRedditServer(this.server);
 
@@ -27,11 +29,15 @@ class _FakeRedditServer {
 
   Future<void> _handle(HttpRequest request) async {
     if (request.uri.path.endsWith('.mpd')) {
+      request.response.statusCode = dashStatusCode;
       request.response.write(dashBody);
       await request.response.close();
       return;
     }
     request.response.statusCode = listingStatusCode;
+    if (listingContentType != null) {
+      request.response.headers.contentType = ContentType.parse(listingContentType!);
+    }
     request.response.write(listingBody);
     await request.response.close();
   }
@@ -115,6 +121,47 @@ void main() {
       server.listingStatusCode = 403;
       await expectLater(
         buildExtractor().extract(Uri.parse('https://www.reddit.com/r/aww/comments/1/x/')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'CHALLENGE_FAILED')),
+      );
+    });
+
+    test('maps a JSON-content-type 404 listing to NOT_FOUND', () async {
+      server.listingStatusCode = 404;
+      server.listingContentType = 'application/json; charset=utf-8';
+      server.listingBody = '{"message": "Not Found", "error": 404}';
+      await expectLater(
+        buildExtractor().extract(Uri.parse('https://www.reddit.com/r/aww/comments/1/x/')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NOT_FOUND')),
+      );
+    });
+
+    test('maps an HTML-content-type 404 listing (WAF shell) to CHALLENGE_FAILED, not NOT_FOUND', () async {
+      // Guard-can-fail: a WAF/proxy synthesizing a bare 404 with its own
+      // HTML page must not be mistaken for Reddit's own "not found".
+      server.listingStatusCode = 404;
+      server.listingContentType = 'text/html; charset=utf-8';
+      server.listingBody = '<html><body>blocked</body></html>';
+      await expectLater(
+        buildExtractor().extract(Uri.parse('https://www.reddit.com/r/aww/comments/1/x/')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'CHALLENGE_FAILED')),
+      );
+    });
+
+    test('maps a DASH manifest 404 to CHALLENGE_FAILED (fall-through eligible), never NOT_FOUND', () async {
+      server.listingBody = '''
+        [
+          {"data": {"children": [
+            {"data": {
+              "id": "1c0xhqk",
+              "title": "My dog discovers snow",
+              "secure_media": {"reddit_video": {"dash_url": "https://v.redd.it/abc123/DASHPlaylist.mpd"}}
+            }}
+          ]}}
+        ]
+      ''';
+      server.dashStatusCode = 404;
+      await expectLater(
+        buildExtractor().extract(Uri.parse('https://www.reddit.com/r/aww/comments/1c0xhqk/my_dog/')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'CHALLENGE_FAILED')),
       );
     });

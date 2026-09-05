@@ -259,6 +259,7 @@ class GenericExtractor implements MediaExtractor {
         width: media.width,
         height: media.height,
         bitrate: media.bitrate,
+        capabilities: media.capabilities,
       );
       anyManifestDrm = anyManifestDrm || expanded.drmDetected;
       formats.addAll(expanded.formats);
@@ -284,13 +285,15 @@ class GenericExtractor implements MediaExtractor {
   }
 
   /// Resource-exhaustion guard: stops buffering a response body once
-  /// [_maxBodyBytes] have been read, rather than accumulating an
-  /// unbounded amount of memory for a pathologically large (or
-  /// deliberately hostile) response. Breaking out of the `await for` loop
-  /// cancels the underlying stream subscription; `client.close(force:
-  /// true)` in the `finally` block below additionally tears down the
-  /// connection regardless.
-  Future<FetchedBody> _fetchWithStatus(Uri url, {Map<String, String>? extraHeaders}) async {
+  /// [maxBytes] (defaulting to [_maxBodyBytes]) have been read, rather
+  /// than accumulating an unbounded amount of memory for a pathologically
+  /// large (or deliberately hostile) response. [FormatExpander] passes a
+  /// tighter cap for its per-variant DRM-verification fetches. Breaking
+  /// out of the `await for` loop cancels the underlying stream
+  /// subscription; `client.close(force: true)` in the `finally` block
+  /// below additionally tears down the connection regardless.
+  Future<FetchedBody> _fetchWithStatus(Uri url, {Map<String, String>? extraHeaders, int? maxBytes}) async {
+    final effectiveMaxBytes = maxBytes ?? _maxBodyBytes;
     final client = _httpClientFactory();
     try {
       final response = await HostPolicy.guardedRequest(
@@ -307,9 +310,9 @@ class GenericExtractor implements MediaExtractor {
       final bytes = <int>[];
       await for (final chunk in response) {
         bytes.addAll(chunk);
-        if (bytes.length >= _maxBodyBytes) break;
+        if (bytes.length >= effectiveMaxBytes) break;
       }
-      final capped = bytes.length > _maxBodyBytes ? bytes.sublist(0, _maxBodyBytes) : bytes;
+      final capped = bytes.length > effectiveMaxBytes ? bytes.sublist(0, effectiveMaxBytes) : bytes;
       String body;
       try {
         body = utf8.decode(capped);

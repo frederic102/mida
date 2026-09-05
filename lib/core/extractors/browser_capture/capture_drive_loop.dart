@@ -27,10 +27,14 @@ class CaptureDriveLoop {
   ///    an XHR-driven "loading" screen needs a second, later nudge - one
   ///    attempt right after load is not always enough).
   /// 4. Once [candidates] is non-empty (whether from step 1, mid-poll, or
-  ///    already before this call even started), waits [variantSettleDelay]
+  ///    already before this call even started) *and none of them is
+  ///    already a whole manifest* (`m3u8`/`mpd`), waits [variantSettleDelay]
   ///    longer so sibling-quality variants of the same stream - which
   ///    tend to land within a second or two of each other - are not
-  ///    missed by returning the instant the very first one appears.
+  ///    missed by returning the instant the very first one appears. A
+  ///    manifest candidate already enumerates every variant itself (its
+  ///    own fetch-and-parse happens later, in `CapturedFormatBuilder`), so
+  ///    there are no siblings left to wait for.
   static Future<void> run(
     DevtoolsSession session,
     Map<String, CapturedMediaCandidate> candidates, {
@@ -65,7 +69,8 @@ class CaptureDriveLoop {
       }
     }
 
-    if (candidates.isNotEmpty) {
+    final hasManifestCandidate = candidates.values.any((c) => c.container == 'm3u8' || c.container == 'mpd');
+    if (candidates.isNotEmpty && !hasManifestCandidate) {
       await Future<void>.delayed(variantSettleDelay);
     }
   }

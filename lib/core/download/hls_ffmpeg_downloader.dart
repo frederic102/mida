@@ -52,11 +52,18 @@ class HlsFfmpegDownloader {
   /// set this to true.
   final bool allowPrivateHosts;
 
+  /// Forwarded to [ManifestReferenceScanner.scanAndCheck]'s own DNS-answer
+  /// (rebinding) check for every host it references - defaults to the real
+  /// `InternetAddress.lookup`; tests inject a fake resolver so a fixture
+  /// hostname's DNS answer never depends on this sandbox's real network.
+  final Future<List<InternetAddress>> Function(String host) resolveHost;
+
   HlsFfmpegDownloader({
     Future<String> Function()? ffmpegPathResolver,
     HttpClient Function()? httpClientFactory,
     ManifestReferenceScanner? scanner,
     this.allowPrivateHosts = false,
+    this.resolveHost = InternetAddress.lookup,
   })  : _ffmpegPathResolver = ffmpegPathResolver ?? FfmpegLocator.ffmpegPath,
         _scanner = scanner ?? ManifestReferenceScanner(httpClientFactory: httpClientFactory);
 
@@ -196,7 +203,12 @@ class HlsFfmpegDownloader {
   /// `SegmentTemplate`/`ContentProtection`, ...) before this method
   /// returns successfully.
   Future<void> _assertManifestSafe(String url, Map<String, String> headers) async {
-    await _scanner.scanAndCheck(Uri.parse(url), headers, allowPrivateHosts: allowPrivateHosts);
+    await _scanner.scanAndCheck(
+      Uri.parse(url),
+      headers,
+      allowPrivateHosts: allowPrivateHosts,
+      resolveHost: resolveHost,
+    );
   }
 
   /// Parses one line of ffmpeg's `-progress pipe:1` machine-readable
@@ -214,10 +226,24 @@ class HlsFfmpegDownloader {
   /// called) when [totalDuration] is null or zero, since the fraction is
   /// meaningless without a known total (e.g. the source did not report a
   /// duration).
+  ///
+  /// Always awaits the process's own exit code before returning (and
+  /// before the pipeline's caller ever attempts to move the `.part` file
+  /// ffmpeg was writing to) - this is what makes the move safe to attempt
+  /// at all; `FileMover`'s own `PathAccessException` retry (see its own
+  /// doc) is a separate, further backstop against something *else*
+  /// (Windows Defender/an indexer) transiently locking the file right
+  /// after ffmpeg itself released it, not evidence this method returns
+  /// early. [processTimeout], when set, kills ffmpeg (`SIGKILL`, so a
+  /// stalled/hung process - a stuck network read mid-manifest, say -
+  /// cannot block this forever) if it has not exited by then; opt-in and
+  /// unset by default so a long real download is never cut short by a
+  /// value this method cannot itself justify choosing.
   Future<void> run(
     List<String> args, {
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    Duration? processTimeout,
   }) async {
     final ffmpegPath = await _ffmpegPathResolver();
     final process = await Process.start(ffmpegPath, args);
@@ -234,9 +260,23 @@ class HlsFfmpegDownloader {
     final stderrSub =
         process.stderr.transform(const SystemEncoding().decoder).listen(stderrBuffer.write);
 
-    final exitCode = await process.exitCode;
+    var timedOut = false;
+    var exitCodeFuture = process.exitCode;
+    if (processTimeout != null) {
+      exitCodeFuture = exitCodeFuture.timeout(processTimeout, onTimeout: () {
+        timedOut = true;
+        process.kill(ProcessSignal.sigkill);
+        return process.exitCode;
+      });
+    }
+    final exitCode = await exitCodeFuture;
     await stdoutSub.cancel();
     await stderrSub.cancel();
+    if (timedOut) {
+      throw MediaMergeException(
+        'ffmpeg did not finish within ${processTimeout!.inSeconds}s and was killed (stalled/hung process).',
+      );
+    }
     if (exitCode != 0) {
       throw MediaMergeException.fromStderr(stderrBuffer.toString());
     }

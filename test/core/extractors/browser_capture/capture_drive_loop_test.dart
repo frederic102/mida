@@ -70,6 +70,52 @@ void main() {
       expect(session.evaluateCalls, greaterThan(0)); // still fired the first PlaybackTrigger pass
     });
 
+    test('guard can fail: a manifest candidate (m3u8) already present skips variantSettleDelay entirely', () async {
+      // A master/media playlist already enumerates every variant itself
+      // (CapturedFormatBuilder parses it later); there is nothing left to
+      // wait for. Bilibili diagnostic run (docs/plan-phase5-coverage.md):
+      // this is one of the three latency cuts that got its capture
+      // attempt under the 90s wall.
+      final session = _CountingSession();
+      final candidates = {'k': const CapturedMediaCandidate(url: 'https://cdn.example.com/master.m3u8', container: 'm3u8')};
+      final stopwatch = Stopwatch()..start();
+
+      await CaptureDriveLoop.run(
+        session,
+        candidates,
+        postLoadDelay: const Duration(milliseconds: 5),
+        autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(seconds: 30),
+        // Deliberately huge: if variantSettleDelay were NOT skipped for a
+        // manifest candidate, this test would time out rather than merely
+        // being slow.
+        variantSettleDelay: const Duration(seconds: 30),
+        pollInterval: const Duration(milliseconds: 5),
+      );
+
+      stopwatch.stop();
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+    });
+
+    test('an mp4 (non-manifest) candidate still waits out the full variantSettleDelay', () async {
+      final session = _CountingSession();
+      final candidates = {'k': const CapturedMediaCandidate(url: 'https://cdn.example.com/a.mp4', container: 'mp4')};
+      final stopwatch = Stopwatch()..start();
+
+      await CaptureDriveLoop.run(
+        session,
+        candidates,
+        postLoadDelay: const Duration(milliseconds: 5),
+        autoplayRetryDelay: const Duration(milliseconds: 5),
+        firstCandidateTimeout: const Duration(seconds: 30),
+        variantSettleDelay: const Duration(milliseconds: 200),
+        pollInterval: const Duration(milliseconds: 5),
+      );
+
+      stopwatch.stop();
+      expect(stopwatch.elapsed, greaterThanOrEqualTo(const Duration(milliseconds: 200)));
+    });
+
     test('nothing ever arrives: polls up to firstCandidateTimeout and fires a second trigger pass at the halfway point',
         () async {
       final session = _CountingSession();

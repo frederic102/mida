@@ -95,6 +95,34 @@ void main() {
     // false) made the "::ffff:127.0.0.1" and "::ffff:169.254.169.254"
     // tests above go red (both flipped to `isFalse`, i.e. allowed),
     // proving the unwrap is load-bearing rather than decorative.
+
+    group('a hostless URI (blob:/data:/mailto:) is disallowed', () {
+      // Live-caught (coordinator repro, coverage probe): a browser-captured
+      // `blob:` URL survived into `MediaInfo.formats` for one site, and
+      // `HttpClient.getUrl` throws a raw `ArgumentError` ("No host
+      // specified in URI ...") for it rather than any typed exception this
+      // app catches - a Dart `Error`, not an `Exception`, so
+      // `MediaDownloadPipeline`'s per-candidate `on Exception` handler
+      // does not catch it and the whole download crashes instead of just
+      // that one candidate failing. `isDisallowedHost` returning true here
+      // (rather than the old `host.isEmpty -> false`) is what turns that
+      // into a clean, catchable refusal at the single choke point every
+      // fetch already goes through.
+      test('guard can fail: a blob: URI (no host at all) is disallowed', () {
+        expect(HostPolicy.isDisallowedHost(Uri.parse('blob:https://example.com/3088eec3-c0ca-4021-8b54')), isTrue);
+      });
+
+      test('guard can fail: a data: URI is disallowed', () {
+        expect(HostPolicy.isDisallowedHost(Uri.parse('data:text/plain;base64,SGVsbG8=')), isTrue);
+      });
+
+      test('assertAllowedHost throws for a hostless URI, not a raw ArgumentError from further down the chain', () {
+        expect(
+          () => HostPolicy.assertAllowedHost(Uri.parse('blob:https://x/y'), context: 'a captured media URL'),
+          throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'UNSUPPORTED_URL')),
+        );
+      });
+    });
   });
 
   group('HostPolicy.assertAllowedHost', () {
@@ -174,6 +202,31 @@ void main() {
     // thrown.
   });
 
+  group('HostPolicy.guardedRequest: a hostless URI (blob:) is refused, not a raw ArgumentError', () {
+    test(
+      'guard can fail: throws MediaExtractionException(UNSUPPORTED_URL), never reaches HttpClient.getUrl at all',
+      () async {
+        final client = HttpClient();
+        addTearDown(() => client.close(force: true));
+
+        // Guard can fail (verified, see report): temporarily reverting
+        // `isDisallowedHost`'s `host.isEmpty` branch to `return false` (the
+        // pre-fix behavior) made this test fail - `guardedRequest` fell
+        // through to `client.getUrl(uri)`, which threw a bare
+        // `ArgumentError: Invalid argument(s): No host specified in URI
+        // blob:...` instead of the expected `MediaExtractionException`.
+        await expectLater(
+          HostPolicy.guardedRequest(
+            client,
+            Uri.parse('blob:https://example.com/3088eec3-c0ca-4021-8b54'),
+            useHead: false,
+          ),
+          throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'UNSUPPORTED_URL')),
+        );
+      },
+    );
+  });
+
   group('HostPolicy.guardedRequest: DNS-rebinding guard', () {
     test(
       'a syntactically public hostname whose injected resolver answers with a loopback address is '
@@ -235,7 +288,7 @@ void main() {
     });
 
     // Guard-can-fail evidence (verified, see report): temporarily making
-    // `_assertResolvesToPublicHost` a no-op (as if the DNS-rebinding check
+    // `assertResolvesToPublicHost` a no-op (as if the DNS-rebinding check
     // did not exist, i.e. the pre-fix behavior) made the first test above
     // fail: `guardedRequest` proceeded straight to `client.getUrl(...)`,
     // which - because `looks-public.example.test` is not a real domain in
@@ -243,5 +296,69 @@ void main() {
     // expected `MediaExtractionException(UNSUPPORTED_URL)`, and
     // `lookupCalls` stayed 0 instead of 1. Reverted immediately after
     // confirming the failure.
+
+    test('a lookup failure fails CLOSED (refused), not proceeds as inconclusive', () async {
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+
+      Future<List<InternetAddress>> failingResolve(String host) async {
+        throw const SocketException('simulated DNS failure (offline sandbox / transient error / NXDOMAIN)');
+      }
+
+      await expectLater(
+        HostPolicy.guardedRequest(
+          client,
+          Uri.parse('http://this-will-never-resolve.example.test/video.mp4'),
+          useHead: false,
+          resolveHost: failingResolve,
+        ),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'UNSUPPORTED_URL')),
+      );
+    });
+
+    // Guard-can-fail evidence (see report): reverting `assertResolvesToPublicHost`'s
+    // catch clause to `catch (_) { return; }` (the pre-fix "treat a lookup
+    // failure as inconclusive" behavior) makes the test above fail: the
+    // call falls through to a real `client.getUrl(...)` against a
+    // hostname that cannot resolve, throwing a bare `SocketException`
+    // instead of the expected `MediaExtractionException(UNSUPPORTED_URL)`.
+  });
+
+  group('HostPolicy.assertResolvesToPublicHost (direct, no fetch)', () {
+    test('a hostname resolving to a public address returns normally', () async {
+      await expectLater(
+        HostPolicy.assertResolvesToPublicHost(
+          Uri.parse('https://looks-public.example.test/seg.ts'),
+          resolveHost: (host) async => [InternetAddress('93.184.216.34')],
+        ),
+        completes,
+      );
+    });
+
+    test('a hostname resolving to a private address (10.0.0.1) is rejected', () async {
+      await expectLater(
+        HostPolicy.assertResolvesToPublicHost(
+          Uri.parse('https://looks-public.example.test/seg.ts'),
+          resolveHost: (host) async => [InternetAddress('10.0.0.1')],
+        ),
+        throwsA(
+          isA<MediaExtractionException>()
+              .having((e) => e.status, 'status', 'UNSUPPORTED_URL')
+              .having((e) => e.reason, 'reason', contains('10.0.0.1')),
+        ),
+      );
+    });
+
+    test('a literal-IP host never invokes resolveHost at all', () async {
+      var lookupCalls = 0;
+      await HostPolicy.assertResolvesToPublicHost(
+        Uri.parse('https://93.184.216.34/seg.ts'),
+        resolveHost: (host) async {
+          lookupCalls++;
+          return [InternetAddress('93.184.216.34')];
+        },
+      );
+      expect(lookupCalls, 0);
+    });
   });
 }

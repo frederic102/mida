@@ -47,91 +47,170 @@ kakao-tv, chzzk, soundcloud, bandcamp, twitch, bilibili, nytimes.
 DONE: 위 13개 실패 사이트 중 **최소 8개**가 캡처만으로 포맷 1개 이상 반환.
 가드 실패 증명 포함. 진단 로그 요약을 보고서에.
 
-### Lane A 추가 경화 (2026-09-05, 코디네이터 지시 - headed-by-default + Codex 리뷰 A-E)
+라운드 1~3(headed-by-default 측정, Codex 리뷰 A-E, 진단 라운드 2, 최종 게이트 진단,
+독립 리뷰 라운드 2, 회귀 라운드 3)의 전체 기록은 `docs/plan-phase5-lane-a-history.md`
+참조(이 파일이 400줄 캡에 부딪혀 라운드 4에서 분리, 2026-09-06).
 
-**Headed-by-default 측정**: `--headless=new`는 Cloudflare/DataDome 등이 즉시 핑거프린트해
-챌린지 페이지/빈 SPA 셸을 반환한다 (실측: dailymotion 헤드리스=0캔디데이트/헤디드=1,
-nytimes 헤드리스=0/헤디드=2, 동일 페이지에서 헤드리스 플래그만 바꿔 확인).
-`navigator.webdriver`는 두 모드 모두 `false`(차이 없음) - 실제 차이는 UA의
-`HeadlessChrome` 토큰 + 렌더링 핑거프린트. `BrowserDevtoolsSession.launch`는 이제
-헤디드(오프스크린, `--window-position=-32000,-32000` + `--window-size=1280,720`)를
-먼저 시도하고, 그 헤디드 "브라우저 프로세스+CDP 세션" 자체가 안 뜨거나
-(`InteractiveSessionDetector` - Windows `SESSIONNAME` 부재) `preferHeaded:false` 일 때만
-headless로 폴백한다 (`browser_launch_args.dart`, `interactive_session_detector.dart`,
-`browser_launch_resources.dart`). `--enable-automation`은 애초에 전달한 적 없음
-(그 플래그가 `navigator.webdriver`를 켜는 것이지 디버깅 포트 자체가 아님) - 스텔스
-패치 없음. `BrowserCaptureExtractor.extract`는 헤디드 첫 시도에서 페이지 자체가
-`Page.loadEventFired` 없이 끝나면(포맷 0개) 딱 한 번 headless로 전체 캡처를 재시도한다
-(`shouldRetryHeadless` - `capture_attempt.dart`, 순수 함수로 유닛 테스트).
+### Lane A 라운드 4 (2026-09-06, 실다운로드 게이트 - blob: 후보 누출 + Fetch 워커 커버리지)
 
-**A - 브라우저 내부 사설 목적지 차단**: CDP `Fetch.enable`(전 패턴)로 모든 요청을
-가로채, `PrivateDestinationGuard`가 (동기 검사 + 필요 시 `InternetAddress.lookup`
-DNS 재확인) 사설/루프백/메타데이터 호스트면 `Fetch.failRequest`, 아니면
-`Fetch.continueRequest`. 기존 사후 후보 필터(`HostPolicy.assertAllowedHost`)보다
-먼저, 후보 목록이 생기기도 전에 막는다.
+**1. blob: URL이 `MediaInfo.formats`에 누출(nicovideo, 비결정적)**: Chromium이
+`<video>` 엘리먼트의 `blob:`(MediaSource) src에 대해 실제 `Network.responseReceived`를
+`video/mp4` Content-Type과 함께 발생시킴 - `CapturedMediaClassifier.classify`의
+확장자 없는 mimeType 폴백(라운드 2, vk.com/Bandcamp용)이 URL 스킴을 전혀 검사하지
+않아 이 응답이 그대로 후보가 됨. 이 CDP 이벤트 발생 여부 자체가 레이스라 "한 번은
+포맷에 섞이고 한 번은 14개 깨끗하게 나옴"의 비결정성과 정확히 일치. **수정**:
+`CapturedMediaClassifier.isFetchableUrl`(신규, `http`/`https`만 통과) 추가, `classify`
+와 `classifyByUrlOnly` 양쪽 진입점 최상단에서 게이트. `CapturedMediaRanker`의 기존
+`blob:` 문자열 접두사 체크도 동일 헬퍼로 교체(더 넓은 커버리지: `data:`, 스킴 없는
+문자열 등도 함께 차단, 단순 문자열 매치가 아님을 테스트로 증명). 테스트: **guard can
+fail** - `classify`/`classifyByUrlOnly`/`NetworkSignalRecorder.recordResponse`/
+`CapturedMediaRanker.rank` 네 지점 모두에서 `blob:`(+`data:`) 입력이 후보를 만들지
+못함을 각각 별도로 확인.
 
-**B - 헤디드 견고성**: (1) 페이지 로드 실패 시 전체 캡처 headless 재시도(위 참조),
-(2) 비대화형 세션(서비스 컨텍스트) 사전 감지 후 즉시 headless, (3)
-`--window-size=1280,720` 추가(뷰포트 정상화). 극단적 오프스크린 좌표 자체가
-핑거프린트일 수 있다는 리뷰 지적은 인지하되, 실측이 헤디드 우세를 분명히 보여주는
-현재로선 근거 없는 추가 변경을 하지 않기로 결정(`browser_launch_args.dart` 주석).
+**2. `shared_worker`/`service_worker`가 PrivateDestinationGuard 커버리지 밖(코디네이터
+보안 후속 지적)**: 라운드 3에서 `Fetch`/`Network` 활성화를 `page`/`iframe`에만
+적용한 것은 그 시점엔 데드락 방지책이었지만, resume이 `finally`로 무조건 보장된
+지금은 그 제한이 순수한 커버리지 공백으로 남음 - service worker가 자체적으로
+fetch를 발생시켜도 어떤 사설 목적지 검사도 받지 않았음. **수정**:
+`ChildTargetResumer.fetchInterceptedTargetTypes`에 `worker`/`shared_worker`/
+`service_worker`를 추가. `Fetch.enable`/`Network.enable` 각 호출은 여전히 개별
+`try`/`catch`로 감싸여 있고 resume은 `finally`로 무조건 실행되므로, CDP가 실제로
+그 타깃 타입에서 이 도메인을 거부하더라도(라이브 CDP 세션으로 확인은 못 함 - 문서화로
+갈음, "else document" 충족) 그 한 통화만 조용히 스킵되고 라운드 3의 데드락이 재현되지
+않는다(가드 실패 테스트: service_worker 타입에서 `Fetch.enable`이 에러를 반환해도
+resume은 여전히 발생).
 
-**C - 프로세스 트리 kill + 스테일 프로필 스윕**: `BrowserProcessTree.kill`이
-`killAndAwaitExit`의 SIGTERM/SIGKILL 이후 Windows에서 `taskkill /T /F /PID`로
-전체 자식 트리(렌더러/GPU 프로세스는 부모 kill만으로 안 죽음)를 마저 정리.
-`BrowserTempCleanup.sweepStale`이 `launch()` 시작 시 fire-and-forget으로
-1시간 이상 된 `mida_cdp_*`/`mida_profile_*` 임시 디렉터리를 쓸어낸다. 프로필 삭제가
-재시도 후에도 실패하면 그 사실을 예외 메시지에 덧붙인다(`BrowserTempCleanup.deleteQuietly`
-반환값).
+**확인**: `flutter analyze`(전체 프로젝트) 0 error, 새 이슈 0(기존 54개 info/warning은
+전부 다른 레인 소유 파일). `test/core/services`, `test/core/extractors/browser_capture`
+전체 214개 테스트 그린(라운드 3의 203개 + 이번 라운드 신규 11개). 라이브 히트 없음
+(이번 라운드는 순수 정적 분석/유닛 테스트로 재현 가능한 결함이라 코디네이터 지시대로
+라이브 hit 없이 수정). msedge 프로세스 수 35개로 라운드 3과 동일(변동 없음, 이번
+라운드는 브라우저를 전혀 띄우지 않음).
 
-**D - 쿠키 도메인 스코핑**: `MediaInfo.cookiesByDomain`(도메인별 `CookieEntry` 목록)
-추가, `requestHeaders`는 UA/Referer 전용으로 축소(다른 추출기 호환을 위해
-`requestHeaders['Cookie']`는 폴백으로 계속 인식). `CookieScope.headerFor`가
-도메인 서픽스 매치 + `secure` 존중으로 요청별 Cookie 헤더를 만든다.
-`StreamDownloader`는 리다이렉트 홉마다 재계산, `HlsFfmpegDownloader`는 ffmpeg의
-전역 `-headers` 한계상 매니페스트 자신의 호스트로만 스코프(부분적 완화, 문서화됨).
-`MediaDownloadPipeline`은 `FormatRequestContext`(headers+cookiesByDomain 번들)로
-스레딩(파라미터 수 증가 없이 기존 `headers` 자리를 대체).
+### Lane A 라운드 5 (2026-09-06, 실다운로드 게이트 - vimeo/facebook/niconico/douyin
+바레 CMAF/fMP4 세그먼트가 완결 파일로 노출됨)
 
-**E**: 위 B(3) 주석 참조.
+최종 게이트 근본 원인: 캡처 티어가 바레 CMAF/fMP4 세그먼트(moof/mfhd/traf/trun만
+있고 ftyp/moov 없음 - `.cmfv`/`.cmfa` 확장자, 확장자 없는 `video/mp4` 응답,
+`range=`/`bytes=` 쿼리로 주소 지정되는 한 파일의 바이트 레인지 조각)를 완결
+다운로드 가능 파일처럼 노출하고 있었음 - 다운로드 결과물에 init 세그먼트(`moov`)가
+없어 ffprobe가 스트림을 찾지 못함.
 
-### Lane A 진단 라운드 2 (2026-09-05, 클린 게이트 90s/site 재현 실패 6곳)
+**1. 세그먼트 분류 확장**: `CapturedMediaClassifier.isSegmentUrl`(신규, 단일 판정
+지점) - `.cmfv`/`.cmfa`/`.m4s`/`.ts`, 숫자-확장자 인접 패턴(`\d{2,5}\.(m4s|cmfv|
+cmfa|mp4)`), `seg-`/`segment`/`frag`/`chunk`/`init`/`range=`/`bytes=` 키워드를
+URL 어디서든 매칭하면 세그먼트로 판정, `classify`/`classifyByUrlOnly` 양쪽 최상단
+에서 게이트(mimeType 기반 수락보다 먼저 - 확장자 없는 mimeType 폴백이 스킴을
+검사하지 않아 라운드 4의 blob: 누출과 같은 종류의 구멍이었음). `SegmentManifestProber
+.looksLikeSegmentUrl`은 이제 이 메서드로 위임(판정 지점 중복 방지).
 
-pinterest/youku/vk/bandcamp/xiaohongshu/reddit 각 1회 진단 실행
-(`document.title`, `<video>` 존재, `Page.loadEventFired`, mimeType별 응답 수,
-크기 top10, PrivateDestinationGuard 차단 목록 덤프):
+**주의(코디네이터에게 명시적으로 플래그)**: `range=`/`bytes=`를 세그먼트 신호로
+추가하면서 라운드 2의 vk.com(`okcdn.ru`) 픽스처(`?...&bytes=0-100`)가 문자
+그대로 세그먼트로 재분류됨 - 그 URL의 `bytes=` 파라미터가 실제 HTTP 바이트-레인지
+디스크립터인지 무관한 서명 파라미터명인지 이번 라운드엔 라이브로 재확인하지
+않았음(이번 라운드 지시가 새 사이트 라이브 히트를 요구하지 않았고, 이 정적 분석
+결론 자체가 vimeo/facebook/niconico/douyin 네 사이트 실측에 근거하므로 문자 그대로
+적용). vk.com이 실제로 이 셰이프라면 이건 회귀가 아니라 그동안 안 걸렸던 같은 버그의
+발견이라고 판단하나, 확인은 다음 라이브 게이트에서 vk.com/vk-video를 다시 봐야 함 -
+공개 항목으로 남김.
 
-- **reddit**: 최종 타이틀 "Reddit - Prove your humanity" - Cloudflare/reCAPTCHA류
-  봇체크 인터스티셜. **수정**: `PageStatusDetector`에 `botCheckRequired` 시그널 추가
-  (`prove your humanity`/`just a moment`/`attention required` 등 실측 문구),
-  `BrowserCaptureExtractor`가 `_waitForLoad` 직후 이 시그널을 조기 검사해
-  `_driveCapture`의 전체 대기 예산을 태우지 않고 `BOT_CHECK_REQUIRED`로 즉시 실패
-  (봇체크를 우회/자동 통과하지 않음 - 그저 빠르게 보고).
-- **vk** (→ vkvideo.ru로 리다이렉트): 실제 `video/mp4`/`audio/mp4` 트래픽이 CDP에
-  잡혔으나(okcdn.ru, 서명된 경로에 확장자 전혀 없음) `CapturedMediaClassifier.classify`가
-  "mimeType는 video/audio인데 URL에 인식 가능한 확장자가 없음" 케이스를 전부 버리고
-  있었음. **수정**: 그 경우 서버 자신의 mimeType을 신뢰해 컨테이너를 추론
-  (video/webm→webm, audio/mp4→m4a, audio/mpeg→mp3, 기본 mp4)하도록 폴백 추가.
-  같은 라운드에서 `.ts`(HLS 세그먼트, video/mp2t)가 이 폴백에 잘못 걸려 자기 자신의
-  후보가 되는 회귀를 발견 → `.ts`를 `.m4s`와 동일하게 "인식하되 컨테이너 없음"으로
-  등록해 여전히 세그먼트로만 남도록 수정 (가드 실패 증거:
-  `network_signal_recorder_test.dart`).
-- **bandcamp** (`/discover`): `audio/mpeg` 스트림 다수 캡처됐으나 URL 경로가
-  `mp3-128`(점 없는 경로 세그먼트)라 확장자 정규식이 애초에 매칭 대상이 아니었음 -
-  위와 동일한 mimeType 폴백으로 함께 해결됨(컨테이너 'mp3', SoundCloud 추출기의
-  기존 관례와 일치).
-- **pinterest/xiaohongshu**: 특정 pin/note URL이 익명 세션에서 일반 피드
-  (`/ideas/`, `/explore`)로 리다이렉트되며 콘텐츠 ID 자체가 사라짐 - 로그인 필요
-  또는 안티스크레이핑성 리다이렉트로 추정되나, 일반적인 "제목/URL 패턴"으로는
-  안전하게 탐지할 신뢰 가능한 시그널이 없어(오탐 위험) 이번 라운드에서는 수정하지
-  않음(알려진 한계로 기록).
-- **youku**: 탐색한 비디오 ID가 완전히 무관한 광고성 영상으로 이어짐(픽스처
-  자체의 문제로 보임, 캡처 엔진 결함 아님).
+**2. 형제 세그먼트 그룹핑(신규, `NetworkSignalRecorder.reclassifyFragmentedSiblings`)**:
+확장자도 키워드도 없는 순수 숫자 경로 세그먼트(예: `.../fragments/5?sig=...`)는
+per-URL 패턴으로 못 잡음 - 캡처 완료 후 한 번(이벤트마다가 아니라) 전체 후보를
+"디렉터리 + 마지막 경로 세그먼트의 숫자런 자리표시자로 치환" 기준으로 그룹핑,
+컨테이너가 mp4/m4a고 크기가 3MB 미만이며 같은 그룹에 3개 이상 있으면 전부 세그먼트로
+강등. 2개 이하, 3MB 이상, 크기 미상, m3u8/mpd 컨테이너는 건드리지 않음(품질
+사다리 오탐 방지 - 실제 화질별 변형은 보통 그렇게 작지 않거나 3개 미만).
 
-**공통 수정 (모든 사이트에 적용)**: `ConsentDialogDismisser` 추가 - 텍스트 매칭
-(accept/agree/동의/确定 등, 영어/한국어/중국어)으로 쿠키/연령 동의 오버레이를
-`PlaybackTrigger`보다 먼저 클릭. `CaptureDriveLoop`의 첫 트리거 및 halfway 재시도
-직전에 배치.
+**3. 매니페스트 복구 확장**: `SegmentManifestProber`가 `stream.mpd` 추가 시도 +
+세그먼트 자신의 베이스 파일명에서 유도한 `<base>.m3u8`/`<base>.mpd` 추가 추측
+(`init.mp4` 옆의 `init.m3u8` 같은 셰이프). `NetworkSignalRecorder
+.recordRequestWillBeSent`가 요청의 `Referer` 헤더도 `classifyByUrlOnly`(조건 B,
+`.m3u8`/`.mpd`는 mimeType 무관 항상 수락)에 통과시켜, CDP가 매니페스트 자체 요청은
+못 봤어도 세그먼트 요청의 Referer에 담긴 매니페스트 URL은 잡음.
+
+**4. 관측된 매니페스트 우선**: 이미 아키텍처가 보장 - `finalCandidates`가 비어있을
+때만 `_segmentProber.recoverFirst`(세그먼트-유래 복구)를 시도하므로, 네트워크에서
+직접 관측된 매니페스트가 하나라도 정상 분류되어 있으면 `finalCandidates`가 비지
+않아 세그먼트 복구 경로 자체가 실행되지 않음 - 별도 우선순위 로직 불필요.
+
+**부수 발견/조정**: 라운드 2의 "Range-fragmented 응답은 가장 큰 content-length를
+유지해 병합" 로직이 실은 이번 버그와 같은 클래스였음(병합된 후보의 `.url`이 첫
+관측된 특정 바이트-레인지 쿼리를 그대로 유지해, 실제 다운로드도 그 한 조각만
+받아왔을 가능성) - 이제 range=/bytes= URL은 애초에 candidates에 들어가지 않으므로
+이 병합 코드 경로 자체가 도달 불가(주석으로 문서화, 코드는 다른 dedupe 케이스를
+위해 유지). 관련 테스트(`network_signal_recorder_test.dart`, `browser_capture_
+extractor_test.dart`) 갱신: "병합되어 포맷 1개" 기대값을 "세그먼트로 추적, 후보
+0개"로 교체.
+
+**신규 파일**: `test/core/extractors/browser_capture/fake_devtools_session.dart`
+(테스트 전용 공유 헬퍼, `browser_capture_extractor_test.dart`가 새 프래그먼트
+테스트 3개를 더하며 400줄 캡을 넘겨 `browser_capture_extractor_fragments_test.dart`
+로 분리하는 과정에서 중복 방지차 추출).
+
+**확인**: `flutter analyze`(전체 프로젝트) 0 error, 새 이슈 0. 영향받은 테스트
+파일 전체(`captured_media_classifier_test.dart`, `network_signal_recorder_test.dart`,
+`segment_manifest_prober_test.dart`, `captured_media_ranker_test.dart`,
+`browser_capture_extractor_test.dart`, `browser_capture_extractor_fragments_test.dart`)
++ `test/core/services` + `test/core/extractors/browser_capture` 전체 224개 테스트
+그린. 가드 실패 테스트: vimeo형(바레 `.cmfv`/`.cmfa` + 관측된 매니페스트 - 매니페스트만
+포맷화, 세그먼트는 전혀 안 됨), niconico형(순수 숫자 경로 세그먼트 3개, 매니페스트
+전무 - NO_MEDIA_FOUND, 깨진 포맷 1개 아님), 형제 그룹핑 5종(강등/비강등 경계
+케이스), Referer 유도 매니페스트, 3개 미만/3MB 이상 비강등. 라이브 히트 없음(정적
+재현 가능한 결함). msedge 프로세스 수 35개, 라운드 4와 동일(변동 없음, 브라우저
+미실행).
+
+### Lane A 라운드 6 (2026-09-06, 회귀 - 라운드 5 규칙이 vimeo/bbc/vk.com 실제
+후보를 오분류)
+
+라운드 5의 `range=`/`bytes=` 키워드와 숫자런-확장자 인접 패턴이 전부 **단일 URL,
+형제 개수·크기 무관**하게 즉시 세그먼트로 판정하는 구조였음 - vimeo `22439234`가
+4포맷→NO_MEDIA_FOUND, bbc `cz7z93zde3po`가 43.8MB 성공 다운로드→"3개 포맷 전부
+실패", vk.com `video-30558759_456239017`가 0.0MB 오디오 전용 파일로 회귀. vimeo +
+bbc 각 1회 진단(신규 `isSegmentUrl` vs 삭제 예정이던 라운드-5 버전을 나란히 로그로
+비교)으로 확증: vimeo의 진짜 프로그레시브 mp4가
+`.../v2/range/prot/<base64>/avf/<uuid>.mp4?...&range=0-802` 셰이프(라운드 5의
+`range=` 키워드가 걸림) - 수정 후 재실행 시 15.7초, 포맷 2개(mp4)로 정상 resolve.
+bbc는 Next.js 정적 자산 디렉터리 `_next/static/chunks/*.js`와 서드파티 분석
+URL(`api.permutive.com/ctx/v1/segment`)까지 라운드 5의 bare substring
+`chunk`/`segment` 매치에 걸렸음(미디어 무관 트래픽이라 실질 영향은 없었으나 오탐
+범위의 증거) - 수정 후 15.0초, 포맷 4개(mp4+mpd)로 정상 resolve.
+
+**좁힌 규칙(코디네이터 지시 그대로)**: `CapturedMediaClassifier.isSegmentUrl`이
+이제 URL 단위로는 딱 두 가지만 본다 - (1) 진짜 세그먼트 확장자
+`.cmfv`/`.cmfa`/`.m4s`/`.ts`, (2) `init`/`seg`/`frag`/`chunk` 경로 토큰을
+**단어 경계**로(`/`, `_`, `.`, `-` 또는 문자열 시작/끝으로 양쪽이 막혀야 함) 매치 -
+"chunks" 디렉터리나 "segment"라는 무관한 단어의 부분 문자열 매치를 더 이상 허용하지
+않음. `range=`/`bytes=`와 라운드 5의 숫자런-확장자-인접 패턴은 URL 단위 판정에서
+**완전히 제거** - 크기/형제 개수 기반 세그먼트 판정은 오직
+`NetworkSignalRecorder.reclassifyFragmentedSiblings`(라운드 5, 3개 이상 + 3MB
+미만 그룹)만 담당. 단일 `range=`/`bytes=` 후보는 크기와 무관하게 항상 유지.
+
+**되돌림**: 라운드 5에서 "range=/bytes= 두 응답은 세그먼트로 추적, 후보 0개"로
+바꿨던 `network_signal_recorder_test.dart`/`browser_capture_extractor_fragments_
+test.dart`의 테스트를 원래 동작("두 번째 응답이 더 큰 content-length를 유지해
+후보 1개로 병합")으로 되돌림 - 이게 bbc/vk.com의 실제 프로그레시브 다운로드 셰이프.
+vk.com의 라운드-2 픽스처(`?...&bytes=0-100`)도 다시 "여전히 후보"로 되돌림.
+
+**(a) 별도 지시: 불안정 테스트 결정화**: `browser_devtools_session_test.dart`의
+"DevTools 포트가 안 뜨면 프로세스 kill + 프로필 삭제" 테스트가 실 스위트에서
+1회 타이밍 실패 - `ping -n 1`(틱당 실 1초) 루프 + 900ms 실대기 + 10초 벽시계
+상한 + `preferHeaded` 기본값(true)에 의한 이중 시도가 전부 CI 부하에 취약했음.
+수정: `preferHeaded: false`(단일 시도), `connectTimeout` 150ms, 가짜 배치를
+지연 없는 틱 루프로 교체(초당 수백 틱), 200ms 고정 창(2초 상한 내)에서 "킬 이후
+틱 카운트가 정확히 0 증가"를 단언(느슨한 `< 3` 대신 등식 - `killAndAwaitExit`가
+프로세스 종료를 `await`한 뒤 반환하므로 등식이 성립). 벽시계 스톱워치 단언은
+제거. 5회 연속 재실행으로 결정성 확인.
+
+**확인**: vimeo/bbc 각 1회 라이브 진단(코디네이터 승인)으로 회귀 확정 수정 확인.
+가드 실패 테스트: vimeo 실제 URL 셰이프(`isSegmentUrl` false, `classify` 후보
+유지), bbc의 `_next/static/chunks`/`permutive.../segment` 오탐 방지, 리터럴
+`seg-`/`init.mp4`/`.cmfv`/`.cmfa`/`.m4s`/`.ts`는 여전히 세그먼트, 단일
+`bytes=`+큰 content-length는 여전히 후보. 엔드투엔드: vimeo형/bbc형 각 1개
+신규(라이브 셰이프 그대로 fake session 재현). `flutter analyze`(전체) 0 error,
+새 이슈 0(기존 53개는 전부 다른 파일). `flutter test`(전체 프로젝트) 954 passed,
+42 skipped(MIDA_LIVE 게이트, 미설정), 0 failed. msedge 프로세스 수 35개,
+라이브 진단 전/후 동일(누수 없음).
 
 ## Lane B - 범용 스니퍼 강화 (정적 HTML 단계에서 더 많이 건지기)
 
@@ -184,3 +263,101 @@ DONE: 6개 중 최소 5개 라이브 성공 + Range GET 200/206.
 
 `test/live/lead_coverage_probe_test.dart` 재실행 시 **20개 중 16개 이상 성공**.
 analyze 0 error, 전체 테스트 그린, 빌드 성공.
+
+## Result (2026-09-06)
+
+Honest status based on what is in git history and in the code's own doc
+comments as of this date. Numbers not found anywhere in that history are
+marked "to be measured by the lead" rather than guessed.
+
+### Corpus grew past the original DONE bar
+
+The 최종 DONE bar above was written against a 20-site corpus. By the time
+of the `v2.2 coverage` commit, `test/live/lead_coverage_probe_test.dart`'s
+corpus had grown to 32 sites (the full native-extractor list plus the
+generic-tier sites from `docs/coverage-corpus.md`), and the test file's
+own `MIDA_COVERAGE_MIN` default is still `16`. That default was not raised
+to scale with the larger corpus; flagged here as an open item, not
+silently fixed in this doc pass.
+
+### Aggregate coverage measured
+
+Per the `v2.2 coverage` commit message (`5a572a3`, 2026-09-06): **25/32
+sites resolve formats, 20/32 complete the full resolve + real pipeline
+download + ffprobe criterion** (see `docs/coverage-corpus.md` for what
+that criterion means). No per-site pass/fail breakdown was recorded in
+that commit message. Getting one requires rerunning
+`MIDA_LIVE=1 flutter test test/live/lead_coverage_probe_test.dart` and
+reading its per-site `OK`/`FAIL`/`ERR` output lines - to be measured by
+the lead.
+
+### Lane A (browser capture engine)
+
+Shipped, per this file's own Lane A sections above and the diff history:
+headed-by-default launch with headless fallback, in-browser private-
+destination blocking via CDP `Fetch` interception, consent/age-gate
+dialog dismissal, broadened playback triggers, adaptive first-candidate
+polling, `performance.getEntriesByType('resource')` backfill, segment-to-
+manifest reconstruction, process-tree kill, stale temp-profile sweep, and
+cookie domain scoping. The diagnosis-round-2 and final-gate fixes
+documented above (reddit bot-check early exit, vk/bandcamp mimeType-based
+container fallback, the bilibili `ConcurrentModificationError` crash fix,
+TLS-certificate-failure messaging for vk/ok.ru) are all in the tree with
+their own guard-failure test evidence per file. Pinterest and xiaohongshu
+remain known, undocumented-as-fixed limitations (anonymous-session
+redirect strips the content id) by deliberate choice, not oversight.
+
+The Lane A DONE bar ("최소 8개 사이트가 캡처만으로 포맷 1개 이상 반환") was
+not re-measured against the final 32-site corpus in anything found in git
+history - to be measured by the lead.
+
+### Lane B (generic sniffer)
+
+Shipped: `inline_json_scanner.dart`, `json_media_walker.dart`,
+`oembed_scanner.dart`, and `format_expander.dart` all exist with hermetic
+unit tests and fixtures (`generic_next_data.html`,
+`generic_initial_state.html`, `generic_data_attrs.html`,
+`generic_videojs_setup.html`). Whether this recovered at least 3 more
+successes plus filled in the previously empty `heights` on
+streamable/imgur/bbc/facebook/archive, as the Lane B DONE bar asked, was
+not confirmed against a live run in anything found in git history - to be
+measured by the lead.
+
+### Lane C (Korean platforms)
+
+Shipped: `NaverExtractor`, `ChzzkExtractor`, `KakaoExtractor`, all wired
+into the registry, all with `test/live/korea_live_test.dart`. Per that
+test file's own doc comment, KakaoTV's public video service was confirmed
+live 2026-09-05 to be discontinued, so its half of the Lane C DONE bar
+("포맷 1개 이상") cannot literally be met by design - the honest
+replacement is the clean `NOT_FOUND` behavior described in
+`docs/supported-sites.md`. Whether Naver TV and CHZZK meet their half of
+the bar on a live run was not confirmed in anything found in git history
+- to be measured by the lead.
+
+### Lane D (global platforms)
+
+Shipped: `DailymotionExtractor`, `RedditExtractor`, `TwitchExtractor`,
+`SoundCloudExtractor`, `BilibiliExtractor` - 5 of the 6 sites originally
+scoped for this lane got a native extractor; Rumble did not (it remains
+on the browser-capture tier, per `docs/coverage-corpus.md`), which matches
+the Lane D DONE bar's "6개 중 최소 5개" read as extractors built. Live
+pass/fail is environment-sensitive: per
+`test/live/global_sites_live_test.dart`'s own doc comment (2026-09-05),
+Dailymotion and Twitch VOD were confirmed working end to end in that pass;
+Bilibili and Reddit hit anti-bot blocks in that sandbox's network,
+plausibly TLS-fingerprint based and plausibly reproducible elsewhere;
+SoundCloud's `client_id` resolution and Douyin's JS-VM anti-bot challenge
+were not resolved within that pass's budget. Whether the same holds
+outside that sandbox's network is to be measured by the lead.
+
+### Not shipped / open items
+
+- `MIDA_COVERAGE_MIN` still defaults to 16 against a 32-site corpus (see
+  above).
+- Pinterest and xiaohongshu content-id loss on anonymous redirect.
+- SoundCloud `client_id` resolution and Douyin's JS-VM challenge (Lane D).
+- Niconico current-site auth (per `global_sites_live_test.dart`).
+- Per-site pass/fail for the current 32-site corpus, and a re-check of the
+  Lane A/B/C DONE bars against that corpus, both to be measured by the
+  lead via a live `MIDA_LIVE=1` run.

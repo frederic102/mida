@@ -237,5 +237,76 @@ void main() {
       // `.timeout(...)` above fires, and this test goes red with a
       // TimeoutException instead of the expected single event.
     });
+
+    test(
+      'guard can fail: Target.setAutoAttach requests waitForDebuggerOnStart, and Fetch.enable is sent '
+      'to the child session before Runtime.runIfWaitingForDebugger ever resumes it',
+      () async {
+        // Independent review round 2: with waitForDebuggerOnStart left
+        // false (the pre-fix shape), a child target starts running - and
+        // can fire its own requests - before Fetch.enable ever reaches
+        // it, a real gap in PrivateDestinationGuard's coverage. Asserting
+        // the exact command order sent to the child session's own
+        // sessionId is what actually proves the fix, not just that both
+        // calls eventually happen.
+        final childSessionCalls = <String>[];
+        Map<String, dynamic>? capturedAutoAttachParams;
+
+        server = await _startFakeDevtoolsServer((socket) {
+          socket.listen((raw) {
+            final message = jsonDecode(raw as String) as Map<String, dynamic>;
+            final method = message['method'] as String;
+            final id = message['id'];
+            final sessionId = message['sessionId'] as String?;
+            if (sessionId == 'session-child') childSessionCalls.add(method);
+
+            switch (method) {
+              case 'Browser.getVersion':
+                socket.add(jsonEncode({'id': id, 'result': {'product': 'HeadlessChrome/128.0.0.0'}}));
+                break;
+              case 'Target.createTarget':
+                socket.add(jsonEncode({'id': id, 'result': {'targetId': 'target-main'}}));
+                break;
+              case 'Target.attachToTarget':
+                socket.add(jsonEncode({'id': id, 'result': {'sessionId': 'session-main'}}));
+                break;
+              case 'Target.setAutoAttach':
+                capturedAutoAttachParams = (message['params'] as Map).cast<String, dynamic>();
+                socket.add(jsonEncode({'id': id, 'result': {}}));
+                socket.add(jsonEncode({
+                  'method': 'Target.attachedToTarget',
+                  'sessionId': 'session-main',
+                  'params': {
+                    'sessionId': 'session-child',
+                    'targetInfo': {'targetId': 'target-child', 'type': 'iframe', 'url': 'https://ads.example.com/'},
+                    'waitingForDebugger': true,
+                  },
+                }));
+                break;
+              default:
+                socket.add(jsonEncode({'id': id, 'result': {}}));
+            }
+          });
+        });
+
+        final cdp = await CdpClient.connect(Uri.parse('ws://127.0.0.1:${server.port}/devtools/browser/fake'));
+        final process = _FakeProcess();
+        final session = await BrowserDevtoolsSession.attachToConnectedClient(cdp, process, profileDir);
+        addTearDown(() => session.close());
+
+        // The three child-session commands are fired-and-forget
+        // (unawaited) on attach; give them a moment to land.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        expect(capturedAutoAttachParams?['waitForDebuggerOnStart'], isTrue);
+        expect(childSessionCalls, contains('Fetch.enable'));
+        expect(childSessionCalls, contains('Runtime.runIfWaitingForDebugger'));
+        expect(
+          childSessionCalls.indexOf('Fetch.enable'),
+          lessThan(childSessionCalls.indexOf('Runtime.runIfWaitingForDebugger')),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 10)),
+    );
   });
 }

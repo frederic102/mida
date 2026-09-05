@@ -10,6 +10,7 @@ import '../../../core/extractors/media_models.dart';
 import '../../../core/utils/file_mover.dart';
 import '../../../core/utils/file_utils.dart';
 import 'all_format_candidates_failed_exception.dart';
+import 'caption_download_step.dart';
 import 'download_outcome_verifier.dart';
 import 'download_service_io.dart';
 
@@ -31,9 +32,9 @@ class MediaDownloadPipeline {
   final StreamDownloader Function() _downloaderFactory;
   final HlsFfmpegDownloader _hlsDownloader;
   final MediaMerger _merger;
-  final CaptionDownloader _captionDownloader;
   final FileMover _fileMover;
   final DownloadOutcomeVerifier _verifier;
+  final CaptionDownloadStep _captionStep;
 
   /// Format candidates are tried in rank order up to this many times
   /// before giving up (fewer if `FormatSelector.rank` returned fewer): a
@@ -49,13 +50,18 @@ class MediaDownloadPipeline {
     CaptionDownloader? captionDownloader,
     FileMover? fileMover,
     DownloadOutcomeVerifier? verifier,
+    CaptionDownloadStep? captionStep,
   })  : _selector = selector,
         _downloaderFactory = downloaderFactory ?? StreamDownloader.new,
         _hlsDownloader = hlsDownloader ?? HlsFfmpegDownloader(),
         _merger = merger ?? MediaMerger(),
-        _captionDownloader = captionDownloader ?? CaptionDownloader(),
         _fileMover = fileMover ?? FileMover(),
-        _verifier = verifier ?? DownloadOutcomeVerifier();
+        _verifier = verifier ?? DownloadOutcomeVerifier(),
+        _captionStep = captionStep ??
+            CaptionDownloadStep(
+              captionDownloader: captionDownloader ?? CaptionDownloader(),
+              merger: merger ?? MediaMerger(),
+            );
 
   /// Runs the full pipeline. [onProgress] receives 0.0-1.0 per attempt
   /// (0-0.9 for the raw download, 0.9-1.0 for merge/convert) and resets to
@@ -75,7 +81,8 @@ class MediaDownloadPipeline {
       throw const NoDownloadableFormatsException();
     }
 
-    final baseName = FileUtils.sanitizeFileName(info.title.isEmpty ? info.id : info.title);
+    final rawBaseName = FileUtils.sanitizeFileName(info.title.isEmpty ? info.id : info.title);
+    final baseName = FileUtils.fitBaseNameToPath(outputDir, rawBaseName);
     final requestContext = FormatRequestContext.fromInfo(info);
     final attempts = candidates.length < maxAttempts ? candidates.length : maxAttempts;
 
@@ -114,7 +121,15 @@ class MediaDownloadPipeline {
         // status/failure decisions are based on.
         await _verifier.verifyOutput(finalPath, selected, type, onStatus);
 
-        await _downloadCaptions(info, options, baseName, outputDir, tempPrefix, requestContext.headers, onStatus);
+        await _captionStep.run(
+          info: info,
+          options: options,
+          baseName: baseName,
+          outputDir: outputDir,
+          tempPrefix: tempPrefix,
+          headers: requestContext.headers,
+          onStatus: onStatus,
+        );
         onProgress?.call(1.0);
         return finalPath;
       } on Exception catch (e) {
@@ -165,7 +180,7 @@ class MediaDownloadPipeline {
 
     final outputPath = await FileUtils.getUniqueFilePath('$outputDir/$baseName.${options.audioFormat.value}');
 
-    if (audio.protocol != 'https') {
+    if (_needsFfmpeg(audio)) {
       final partPath = _partPathFor(outputPath);
       try {
         await _hlsDownloader.downloadVerified(
@@ -276,7 +291,7 @@ class MediaDownloadPipeline {
   ) async {
     final muxed = selected.muxed!;
 
-    if (muxed.protocol != 'https') {
+    if (_needsFfmpeg(muxed)) {
       final outputPath = await FileUtils.getUniqueFilePath('$outputDir/$baseName.${options.videoFormat.value}');
       final partPath = _partPathFor(outputPath);
       onStatus?.call('Downloading (stream)...');
@@ -334,6 +349,21 @@ class MediaDownloadPipeline {
     }
   }
 
+  /// True when [format] must go through `HlsFfmpegDownloader` rather than
+  /// `StreamDownloader`: either it is already labeled `hls`/`dash`, or -
+  /// live-caught (coordinator repro) - its own URL path plainly ends in
+  /// `.m3u8`/`.mpd` despite being labeled `https`. A manifest handed to
+  /// `StreamDownloader` is not itself the media (`StreamDownloader` would
+  /// just download the manifest TEXT as if it were a video file), so a
+  /// mislabeled one must be routed to ffmpeg, which can actually read it.
+  /// The query string is stripped first so a signed URL like
+  /// `manifest.m3u8?token=...` still matches.
+  static bool _needsFfmpeg(MediaFormat format) {
+    if (format.protocol != 'https') return true;
+    final path = Uri.tryParse(format.url)?.path.toLowerCase() ?? '';
+    return path.endsWith('.m3u8') || path.endsWith('.mpd');
+  }
+
   Future<void> _downloadFormat(
     MediaFormat format,
     String outputPath,
@@ -352,38 +382,6 @@ class MediaDownloadPipeline {
       );
     } finally {
       downloader.close();
-    }
-  }
-
-  Future<void> _downloadCaptions(
-    MediaInfo info,
-    DownloadOptions options,
-    String baseName,
-    String outputDir,
-    String tempPrefix,
-    Map<String, String> headers,
-    void Function(String message)? onStatus,
-  ) async {
-    final plans = CaptionDownloader.selectPlans(info.captions, info.translatableLanguageCodes, options.subtitleOption);
-    for (final plan in plans) {
-      final vttTemp = '$tempPrefix.${plan.outputLanguageCode}.vtt';
-      try {
-        await _captionDownloader.download(
-          plan.sourceTrack,
-          vttTemp,
-          translateTo: plan.translateTo,
-          headers: headers,
-        );
-        final srtPath = await FileUtils.getUniqueFilePath(
-          '$outputDir/$baseName.${plan.outputLanguageCode}.srt',
-        );
-        await _merger.run(['-y', '-i', vttTemp, srtPath]);
-      } catch (e) {
-        // Captions are a nice-to-have: never fail the main download for them.
-        onStatus?.call('Subtitle (${plan.outputLanguageCode}) skipped: $e');
-      } finally {
-        await _tryDelete(vttTemp);
-      }
     }
   }
 

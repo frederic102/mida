@@ -109,7 +109,7 @@ void main() {
 
     test('a 200 response is written to the output file', () async {
       final track = CaptionTrack(languageCode: 'en', url: 'http://127.0.0.1:${server.port}/caps');
-      final downloader = CaptionDownloader();
+      final downloader = CaptionDownloader(allowPrivateHosts: true);
       final outputPath = '${tempDir.path}/out.vtt';
 
       await downloader.download(track, outputPath);
@@ -121,7 +121,7 @@ void main() {
     test('a 404 response throws instead of writing an empty/garbage file', () async {
       responseStatus = 404;
       final track = CaptionTrack(languageCode: 'en', url: 'http://127.0.0.1:${server.port}/caps');
-      final downloader = CaptionDownloader();
+      final downloader = CaptionDownloader(allowPrivateHosts: true);
       final outputPath = '${tempDir.path}/out.vtt';
 
       await expectLater(
@@ -133,7 +133,7 @@ void main() {
 
     test('custom headers passed to download() reach the server', () async {
       final track = CaptionTrack(languageCode: 'en', url: 'http://127.0.0.1:${server.port}/caps');
-      final downloader = CaptionDownloader();
+      final downloader = CaptionDownloader(allowPrivateHosts: true);
       final outputPath = '${tempDir.path}/out.vtt';
 
       await downloader.download(track, outputPath, headers: const {'X-Test-Header': 'mida-caption'});
@@ -152,7 +152,7 @@ void main() {
 
       try {
         final track = CaptionTrack(languageCode: 'en', url: 'http://127.0.0.1:${translateServer.port}/caps?lang=en');
-        final downloader = CaptionDownloader();
+        final downloader = CaptionDownloader(allowPrivateHosts: true);
         final outputPath = '${tempDir.path}/out.vtt';
         await downloader.download(track, outputPath, translateTo: 'ko');
 
@@ -166,12 +166,50 @@ void main() {
 
   group('CaptionDownloader https-only guard', () {
     test('refuses a non-https, non-loopback URL', () async {
-      final downloader = CaptionDownloader();
+      final downloader = CaptionDownloader(); // allowPrivateHosts defaults to false
       const track = CaptionTrack(languageCode: 'en', url: 'http://example.invalid/caps');
       await expectLater(
         downloader.download(track, '${Directory.systemTemp.path}/should_not_be_created.vtt'),
         throwsA(isA<CaptionDownloadException>()),
       );
+    });
+  });
+
+  group('CaptionDownloader redirect-hop host policy (guard: allowPrivateHosts only exempts hop 0)', () {
+    test('a redirect from an exempted hop 0 to a private/loopback host is rejected, and that host is never '
+        'actually contacted', () async {
+      var privateTargetRequestCount = 0;
+      final privateTarget = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      privateTarget.listen((request) async {
+        privateTargetRequestCount++;
+        request.response.write('should never be reached');
+        await request.response.close();
+      });
+
+      final redirectServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      redirectServer.listen((request) async {
+        request.response.statusCode = 302;
+        request.response.headers.set('Location', 'http://127.0.0.1:${privateTarget.port}/reached');
+        await request.response.close();
+      });
+
+      final tempDir = await Directory.systemTemp.createTemp('mida_caption_dl_redirect_');
+      try {
+        // Hop 0 (the entry URL) is loopback and exempted by
+        // allowPrivateHosts, but it redirects to a DIFFERENT loopback
+        // URL - not hop 0 - which must still be refused.
+        final downloader = CaptionDownloader(allowPrivateHosts: true);
+        final track = CaptionTrack(languageCode: 'en', url: 'http://127.0.0.1:${redirectServer.port}/start');
+        await expectLater(
+          downloader.download(track, '${tempDir.path}/out.vtt'),
+          throwsA(isA<MediaExtractionException>()),
+        );
+        expect(privateTargetRequestCount, 0, reason: 'the redirect target must never be contacted');
+      } finally {
+        await redirectServer.close(force: true);
+        await privateTarget.close(force: true);
+        await tempDir.delete(recursive: true);
+      }
     });
   });
 }

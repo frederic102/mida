@@ -26,6 +26,10 @@ class NiconicoExtractor implements MediaExtractor {
 
   static final _videoIdPathPattern = RegExp(r'^/watch/([a-z]{2}\d+)');
 
+  /// Matches Niconico's own real 404 page's embedded (HTML-entity-encoded)
+  /// loader state - see [_fetchPage]'s corroboration doc.
+  static final _niconicoNotFoundMarkerPattern = RegExp(r'code&quot;:&quot;NOT_FOUND&quot;');
+
   final HttpClient Function() _httpClientFactory;
   final NiconicoWatchDataParser _pageParser;
   final NiconicoDmcSessionClient _sessionClient;
@@ -103,9 +107,25 @@ class NiconicoExtractor implements MediaExtractor {
       final html = await response.transform(utf8.decoder).join();
 
       if (response.statusCode == 404) {
+        // Corroborate before trusting a bare 404 as terminal: verified
+        // live 2026-09-06 (`docs/plan-phase5-coverage.md` Lane D review
+        // round 2, a real nonexistent `sm` id) that Niconico's own 404
+        // page embeds its React-Router loader's response state inline as
+        // HTML-entity-encoded JSON containing literally
+        // `&quot;code&quot;:&quot;NOT_FOUND&quot;` alongside
+        // `&quot;statusCode&quot;:404`. A WAF/proxy synthesizing a bare
+        // 404 would not reproduce that exact embedded marker, so its
+        // absence here means "some 404, not confirmed to be Niconico's
+        // own" and is treated as fall-through eligible instead.
+        if (_niconicoNotFoundMarkerPattern.hasMatch(html)) {
+          throw const MediaExtractionException(
+            'NOT_FOUND',
+            'This Niconico video no longer exists or the link is wrong.',
+          );
+        }
         throw const MediaExtractionException(
-          'NOT_FOUND',
-          'This Niconico video no longer exists or the link is wrong.',
+          'CHALLENGE_FAILED',
+          'Niconico returned an unrecognized 404 page for this video.',
         );
       }
       if (response.statusCode != 200) {

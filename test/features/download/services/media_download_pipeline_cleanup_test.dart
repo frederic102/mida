@@ -37,6 +37,14 @@ Future<HttpServer> _startByteServer(
       }
     }
     request.response.statusCode = range == null ? 200 : 206;
+    if (range != null) {
+      // `StreamDownloader` now requires a 206 response's own Content-Range
+      // to confirm it actually starts where it was asked to - a fixture
+      // that omitted it (as this one used to) is exactly what that check
+      // exists to catch, not something worth exempting the test server
+      // from.
+      request.response.headers.set('Content-Range', 'bytes $start-$end/${content.length}');
+    }
     request.response.add(content.sublist(start, (end + 1).clamp(0, content.length)));
     await request.response.close();
   });

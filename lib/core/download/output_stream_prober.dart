@@ -16,26 +16,47 @@ class OutputStreamProber {
       : _ffprobePathResolver = ffprobePathResolver ?? FfmpegLocator.ffprobePath;
 
   /// Returns the distinct `codec_type` values ffprobe reports for [path]
-  /// (typically a subset of `{video, audio}`), or null if ffprobe itself
-  /// could not be run or its output could not be read - a probe failure
-  /// must not be treated the same as "probed successfully and found no
-  /// streams" (see caller): a broken/missing ffprobe is an environment
-  /// problem, not evidence the downloaded format was bad.
+  /// (typically a subset of `{video, audio}`), an empty set when ffprobe
+  /// ran but could not make sense of the file at all, or null only when
+  /// ffprobe itself could not even be started.
+  ///
+  /// These are two genuinely different failure shapes, previously
+  /// conflated into one (both returned null, "inconclusive, do not fail
+  /// the download over it") - live-caught (coordinator repro): a CMAF/
+  /// fragmented-mp4 media segment with no init segment (`moof`/`traf`/
+  /// `trun` boxes but no `ftyp`/`moov` at all - vimeo and facebook both
+  /// exposed exactly this shape as if it were a complete progressive
+  /// file) makes ffprobe exit non-zero with "trun track id unknown, no
+  /// tfhd was found" - that is not an environment problem, it is
+  /// definitive evidence the downloaded content is not a real,
+  /// standalone-playable file, and letting it through as "could not
+  /// verify" was exactly why these turned up as a "successful" download
+  /// with zero real streams. A `Process.run` call that never gets to
+  /// exit at all (missing/unspawnable ffprobe binary, an `OSError`, ...)
+  /// is the actual environment-problem case, and stays null.
   Future<Set<String>?> streamTypes(String path) async {
+    ProcessResult result;
     try {
       final ffprobePath = await _ffprobePathResolver();
-      final result = await Process.run(ffprobePath, [
+      result = await Process.run(ffprobePath, [
         '-v', 'error',
         '-show_entries', 'stream=codec_type',
         '-of', 'csv=p=0',
         path,
       ]);
-      if (result.exitCode != 0) return null;
-      final stdout = result.stdout;
-      if (stdout is! String) return null;
-      return stdout.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toSet();
     } catch (_) {
       return null;
     }
+    final stdout = result.stdout;
+    final types = stdout is String
+        ? stdout.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toSet()
+        : <String>{};
+    // A non-zero exit with nothing parsed means ffprobe actively refused
+    // this file (corrupt/fragmented-without-init/not really media at
+    // all) - a confirmed empty set, not an inconclusive null. A non-zero
+    // exit that still yielded some partial stream info is left as-is
+    // rather than discarded.
+    if (result.exitCode != 0 && types.isEmpty) return const <String>{};
+    return types;
   }
 }

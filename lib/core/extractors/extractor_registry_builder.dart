@@ -9,6 +9,7 @@ import 'kakao/kakao_extractor.dart';
 import 'media_extractor.dart';
 import 'naver/naver_extractor.dart';
 import 'niconico/niconico_extractor.dart';
+import 'odysee/odysee_extractor.dart';
 import 'reddit/reddit_extractor.dart';
 import 'soundcloud/soundcloud_extractor.dart';
 import 'tiktok/tiktok_extractor.dart';
@@ -28,6 +29,13 @@ import 'youtube/youtube_extractor.dart';
 /// falling through to Generic then BrowserCapture) live in
 /// `ExtractorRegistry.resolveInfo` (`media_extractor.dart`); this function
 /// only builds the ordered list.
+///
+/// As of Phase 5 (`docs/plan-phase5-coverage.md`) this list has 15
+/// platform-native extractors ahead of Generic. See
+/// `docs/supported-sites.md` for the current, human-readable list of what
+/// each one covers and what still falls through to Generic/BrowserCapture
+/// or is out of scope entirely - that file, not this one, is the place to
+/// keep in sync when a new extractor is added below.
 ///
 /// [useBrowserLoginSession] (Settings: "Use browser login session", off by
 /// default) is threaded only into the two extractors that actually launch
@@ -54,6 +62,7 @@ ExtractorRegistry buildExtractorRegistry({bool useBrowserLoginSession = false}) 
       BilibiliExtractor(),
       DouyinExtractor(),
       NiconicoExtractor(),
+      OdyseeExtractor(),
       GenericExtractor(useBrowserLoginSession: useBrowserLoginSession),
     ],
     fallbacks: [BrowserCaptureExtractor(useBrowserLoginSession: useBrowserLoginSession)],

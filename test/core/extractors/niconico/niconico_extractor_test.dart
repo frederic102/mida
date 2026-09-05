@@ -87,11 +87,27 @@ void main() {
       );
     });
 
-    test('maps a page 404 to NOT_FOUND', () async {
+    test('maps a 404 with Niconico\'s own real not-found marker to NOT_FOUND', () async {
+      // Real marker captured live from an actual nonexistent sm id
+      // (docs/plan-phase5-coverage.md Lane D review round 2).
       pageServer.statusCode = 404;
+      pageServer.body = '<script>window.__remixContext = {&quot;statusCode&quot;:404,'
+          '&quot;code&quot;:&quot;NOT_FOUND&quot;};</script>';
       await expectLater(
         buildExtractor().extract(Uri.parse('https://www.nicovideo.jp/watch/sm9')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NOT_FOUND')),
+      );
+    });
+
+    test('maps a bare 404 with no corroborating marker to CHALLENGE_FAILED (fall-through eligible)', () async {
+      // Guard-can-fail: a WAF/proxy synthesizing a 404 would not
+      // reproduce Niconico's own embedded marker - this must not be
+      // treated as terminal.
+      pageServer.statusCode = 404;
+      pageServer.body = '<html><body>some other 404 page</body></html>';
+      await expectLater(
+        buildExtractor().extract(Uri.parse('https://www.nicovideo.jp/watch/sm9')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'CHALLENGE_FAILED')),
       );
     });
   });

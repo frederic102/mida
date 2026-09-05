@@ -139,12 +139,16 @@ class DouyinExtractor implements MediaExtractor {
     final response = await request.close();
     final html = await response.transform(utf8.decoder).join();
 
-    if (response.statusCode == 404) {
-      throw const MediaExtractionException(
-        'NOT_FOUND',
-        'This Douyin video no longer exists or the link is wrong.',
-      );
-    }
+    // No dedicated 404 -> NOT_FOUND branch: live-checked 2026-09-06
+    // (`docs/plan-phase5-coverage.md` Lane D review round 2) that
+    // Douyin's watch page answers HTTP 200 even for a nonexistent video
+    // id (it serves the same anti-bot shell either way from this
+    // network). A 404 here would only come from an intermediary
+    // synthesizing one, not Douyin itself, so it is folded into the
+    // generic non-200 handling below; the real "not found vs anti-bot"
+    // signal is the `_$jsvmprt`/RENDER_DATA check above and
+    // `DouyinRenderDataParser`'s own body-shape check, both already
+    // fall-through eligible (`CHALLENGE_FAILED`/`PARSE_ERROR`).
     if (response.statusCode != 200) {
       throw MediaExtractionException(
         'NETWORK',

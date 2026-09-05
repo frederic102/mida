@@ -224,6 +224,26 @@ void main() {
       final downloader = HlsFfmpegDownloader(ffmpegPathResolver: () async => scriptPath);
       await downloader.run(['-y', '-i', 'in.m3u8', 'out.mp4']);
     });
+
+    test('guard can fail: processTimeout kills a hung process instead of waiting on it forever', () async {
+      final scriptPath = '${tempDir.path}/fake_ffmpeg_hang.bat';
+      // Simulates a stalled ffmpeg (e.g. a stuck network read mid-manifest):
+      // never exits on its own within any duration this test could wait for.
+      await File(scriptPath).writeAsString('@echo off\r\nping -n 120 127.0.0.1 >nul\r\n');
+
+      final downloader = HlsFfmpegDownloader(ffmpegPathResolver: () async => scriptPath);
+      await expectLater(
+        downloader.run(
+          ['-y', '-i', 'in.m3u8', 'out.mp4'],
+          processTimeout: const Duration(milliseconds: 300),
+        ),
+        throwsA(isA<MediaMergeException>().having((e) => e.message, 'message', contains('killed'))),
+      );
+      // Guard can fail (see report): without the timeout wired in (calling
+      // `process.exitCode` unconditionally, ignoring `processTimeout`),
+      // this test would hang for the ping's full ~120s instead of failing
+      // fast with a clear MediaMergeException.
+    }, timeout: const Timeout(Duration(seconds: 30)));
   });
 
 }

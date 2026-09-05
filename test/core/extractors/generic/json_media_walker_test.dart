@@ -3,6 +3,79 @@ import 'package:mida/core/extractors/generic/json_media_walker.dart';
 
 void main() {
   group('JsonMediaWalker.walk', () {
+    group('capabilities from sibling mimeType/type/codecs', () {
+      test('a sibling mimeType of "audio/mp4" marks the candidate audio-only', () {
+        final decoded = {
+          'sources': [
+            {'src': 'https://cdn.example.com/track.mp4', 'mimeType': 'audio/mp4'},
+          ],
+        };
+        final candidates = JsonMediaWalker.walk(decoded);
+
+        expect(candidates.single.capabilities, isNotNull);
+        expect(candidates.single.capabilities!.hasAudio, isTrue);
+        expect(candidates.single.capabilities!.hasVideo, isFalse);
+      });
+
+      test('a Video.js-style sibling "type": "video/mp4" is also read as a mimeType (not audio-only, but not '
+          'informative enough to positively assert either way, so no capabilities hint is returned)', () {
+        final decoded = {
+          'sources': [
+            {'src': 'https://cdn.example.com/clip.mp4', 'type': 'video/mp4'},
+          ],
+        };
+        final candidates = JsonMediaWalker.walk(decoded);
+
+        expect(candidates.single.capabilities, isNull);
+      });
+
+      test('a sibling codecs string with only a video codec prefix (avc1...) marks the candidate video-only', () {
+        final decoded = {
+          'sources': [
+            {'src': 'https://cdn.example.com/clip.mp4', 'codecs': 'avc1.640028'},
+          ],
+        };
+        final candidates = JsonMediaWalker.walk(decoded);
+
+        expect(candidates.single.capabilities, isNotNull);
+        expect(candidates.single.capabilities!.hasVideo, isTrue);
+        expect(candidates.single.capabilities!.hasAudio, isFalse);
+      });
+
+      test('a sibling codecs string with only an audio codec prefix (mp4a...) marks the candidate audio-only', () {
+        final decoded = {
+          'sources': [
+            {'src': 'https://cdn.example.com/track.mp4', 'codecs': 'mp4a.40.2'},
+          ],
+        };
+        final candidates = JsonMediaWalker.walk(decoded);
+
+        expect(candidates.single.capabilities, isNotNull);
+        expect(candidates.single.capabilities!.hasVideo, isFalse);
+        expect(candidates.single.capabilities!.hasAudio, isTrue);
+      });
+
+      test('no mimeType/type/codecs sibling at all leaves capabilities null', () {
+        final decoded = {
+          'sources': [
+            {'src': 'https://cdn.example.com/clip.mp4', 'width': 640, 'height': 360},
+          ],
+        };
+        final candidates = JsonMediaWalker.walk(decoded);
+
+        expect(candidates.single.capabilities, isNull);
+      });
+
+      // Guard-can-fail evidence (verified, see report): temporarily making
+      // `_capabilitiesFromSiblings` always return `FormatCapabilities
+      // .muxed` regardless of sibling content (as if the sibling read did
+      // not exist) made the "mimeType of audio/mp4" and both codecs tests
+      // above fail: `capabilities` came back non-null but with
+      // `hasVideo: true` (the muxed default) instead of the correct
+      // audio-only/video-only reading. Reverted immediately after
+      // confirming the failure.
+    });
+
     test('a source object carrying url + width + height + bitrate keeps all four', () {
       final decoded = {
         'sources': [
@@ -161,6 +234,36 @@ void main() {
       // `walk`'s loop condition made the test above fail: `candidates`
       // came back with all 1000 entries instead of being capped at 200.
       // Reverted immediately after confirming the failure.
+
+      test(
+        'a single flat map with 5,000 media-looking entries (not a list - the shape that used to slip past '
+        'the cap, since the whole entries loop ran to completion inside one `_visitOne` call before the '
+        'outer loop got a chance to re-check it) is capped at 200 and completes quickly',
+        () {
+          final flatMap = <String, String>{
+            for (var i = 0; i < 5000; i++) 'clip$i': 'https://cdn.example.com/clip$i.mp4',
+          };
+          // Nested under "sources" so every entry is `childPlayerish` (the
+          // realistic player-config shape the coordinator's follow-up
+          // names), which is exactly what let all 5,000 through in a
+          // single `_visitOne` call before this fix.
+          final node = {'sources': flatMap};
+
+          final stopwatch = Stopwatch()..start();
+          final candidates = JsonMediaWalker.walk(node);
+          stopwatch.stop();
+
+          expect(candidates.length, lessThanOrEqualTo(200));
+          expect(stopwatch.elapsed.inSeconds, lessThan(2));
+        },
+      );
+
+      // Guard-can-fail evidence (verified, see report): temporarily
+      // reverting the entries loop above to omit the
+      // `out.length >= _maxCandidates` check (the pre-fix shape) made the
+      // flat-map test above fail: `candidates.length` came back `5000`
+      // instead of being capped at 200. Reverted immediately after
+      // confirming the failure.
     });
   });
 }

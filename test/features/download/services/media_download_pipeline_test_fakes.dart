@@ -52,6 +52,7 @@ class RecordingHlsDownloader extends HlsFfmpegDownloader {
     List<String> args, {
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    Duration? processTimeout,
   }) async {
     totalDurationsRequested.add(totalDuration);
     onProgress?.call(1.0);
@@ -135,6 +136,7 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
     List<String> args, {
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    Duration? processTimeout,
   }) async {
     if (shouldFailThisCall()) {
       throw const MediaMergeException('simulated failure on this candidate');

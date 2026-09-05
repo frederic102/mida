@@ -21,6 +21,17 @@ class MediaFormat {
   final bool hasVideo;
   final bool hasAudio;
 
+  /// True when [hasVideo]/[hasAudio] are the safe default guess (muxed),
+  /// not a positive reading from the source itself (a URL-embedded
+  /// encode-tag, a sibling `mimeType`/`codecs`, a manifest's own per-variant
+  /// metadata, ...). Existing behavior is unchanged either way - the
+  /// download pipeline's post-download ffprobe check already retries the
+  /// next ranked candidate whenever a format that claimed `hasAudio: true`
+  /// turns out not to have one (see `DownloadOutcomeVerifier`) - this flag
+  /// only documents *why* a given format was assumed muxed, for
+  /// diagnostics/future use, without changing that retry behavior.
+  final bool capabilitiesUnknown;
+
   /// How this format's [url] must be fetched: `'https'` (the default) means
   /// a plain ranged GET (`StreamDownloader`); `'hls'`/`'dash'` mean [url]
   /// is a manifest (m3u8/mpd) that only ffmpeg can read
@@ -43,6 +54,7 @@ class MediaFormat {
     this.contentLength,
     required this.hasVideo,
     required this.hasAudio,
+    this.capabilitiesUnknown = false,
     this.protocol = 'https',
   });
 
@@ -66,6 +78,7 @@ class MediaFormat {
         contentLength: contentLength,
         hasVideo: hasVideo,
         hasAudio: hasAudio,
+        capabilitiesUnknown: capabilitiesUnknown,
         protocol: protocol,
       );
 

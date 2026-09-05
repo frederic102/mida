@@ -27,6 +27,20 @@ seg0.ts
       expect(DrmPlaylistScanner.isHlsDrmProtected(playlist), isTrue);
     });
 
+    test('KEYFORMAT naming PlayReady by UUID (urn:uuid:9a04f079) is DRM', () {
+      const playlist = '''
+#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="https://lic.example.com/key",KEYFORMAT="urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95"
+seg0.ts
+''';
+      expect(DrmPlaylistScanner.isHlsDrmProtected(playlist), isTrue);
+    });
+
+    test('KEYFORMAT naming PlayReady by scheme name (com.microsoft.playready) is DRM', () {
+      const playlist = '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,KEYFORMAT="com.microsoft.playready"\nseg0.ts\n';
+      expect(DrmPlaylistScanner.isHlsDrmProtected(playlist), isTrue);
+    });
+
     test('#EXT-X-SESSION-KEY (not just #EXT-X-KEY) is also scanned', () {
       const playlist = '''
 #EXTM3U
@@ -78,6 +92,20 @@ variant.m3u8
 
     test('a KEYFORMAT value is DRM', () {
       const manifest = '<MPD><Period><AdaptationSet keyformat="com.widevine.alpha"></AdaptationSet></Period></MPD>';
+      expect(DrmPlaylistScanner.isMpdDrmProtected(manifest), isTrue);
+    });
+
+    test('a ContentProtection schemeIdUri naming the PlayReady system UUID is DRM even with no other marker', () {
+      const manifest = '''
+<MPD><Period><AdaptationSet>
+  <ContentProtection schemeIdUri="urn:uuid:9a04f079-9840-4286-ab92-e65be0885f95"/>
+</AdaptationSet></Period></MPD>
+''';
+      expect(DrmPlaylistScanner.isMpdDrmProtected(manifest), isTrue);
+    });
+
+    test('a bare cenc:default_KID attribute (no ContentProtection wrapper text matched) is DRM', () {
+      const manifest = '<MPD><Period><AdaptationSet cenc:default_KID="1234-5678"></AdaptationSet></Period></MPD>';
       expect(DrmPlaylistScanner.isMpdDrmProtected(manifest), isTrue);
     });
 

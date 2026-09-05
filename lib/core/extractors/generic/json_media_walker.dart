@@ -1,3 +1,5 @@
+import '../browser_capture/format_capabilities.dart';
+
 /// One media URL found while walking a decoded inline-JSON blob
 /// (`__NEXT_DATA__`, `window.__INITIAL_STATE__`, a Video.js `data-setup`
 /// config, etc), plus whatever resolution/bitrate metadata sat in the same
@@ -16,12 +18,23 @@
 /// easily has - is still returned (a caller with network access can still
 /// accept it via a cheap reachability probe), just with this false, so
 /// `HtmlMediaSniffer`/`GenericExtractor` know not to trust it outright.
+///
+/// [capabilities] (live-probe follow-up: a Facebook video resolving 6
+/// formats where every single one failed with "Output is missing its
+/// audio track", because Facebook's DASH renditions are separate
+/// video-only/audio-only flat `.mp4` URLs that otherwise look exactly like
+/// an ordinary muxed file) is a positive video/audio reading taken from a
+/// sibling `mimeType`/`type`/`codecs` value in the *same* JSON object as
+/// [url], via [FormatCapabilities.fromMimeType]/[FormatCapabilities
+/// .fromHlsCodecs]. Null when no sibling gave a decisive (not-just-muxed)
+/// answer - `FormatExpander` decides what to assume in that case.
 class JsonMediaCandidate {
   final String url;
   final int? width;
   final int? height;
   final int? bitrate;
   final bool contextBacked;
+  final FormatCapabilities? capabilities;
 
   const JsonMediaCandidate({
     required this.url,
@@ -29,11 +42,12 @@ class JsonMediaCandidate {
     this.height,
     this.bitrate,
     this.contextBacked = false,
+    this.capabilities,
   });
 
   @override
-  String toString() =>
-      'JsonMediaCandidate($url, ${width}x$height, bitrate: $bitrate, contextBacked: $contextBacked)';
+  String toString() => 'JsonMediaCandidate($url, ${width}x$height, bitrate: $bitrate, '
+      'contextBacked: $contextBacked, capabilities: $capabilities)';
 }
 
 /// Walks an already-decoded JSON tree (whatever `jsonDecode` produced, so
@@ -74,6 +88,8 @@ class JsonMediaWalker {
   static const Set<String> _heightKeys = {'height', 'h'};
   static const Set<String> _bitrateKeys = {'bitrate', 'bandwidth', 'bit_rate'};
   static const Set<String> _qualityKeys = {'quality', 'label', 'resolution'};
+  static const Set<String> _mimeTypeKeys = {'mimetype', 'mime_type', 'contenttype', 'content_type'};
+  static const Set<String> _codecsKeys = {'codecs', 'codec'};
 
   /// Sibling keys (alongside a URL-shaped value, in the same JSON object)
   /// whose mere presence marks that object as describing one specific
@@ -162,16 +178,26 @@ class JsonMediaWalker {
           break;
         }
       }
-      if (directUrl != null) {
+      // Resource-exhaustion guard (security follow-up): the cap must be
+      // checked before *every* append and *every* stack push, not once
+      // per `_visitOne` call - a single flat map with thousands of
+      // media-shaped string values (e.g. `{"sources": {"c0": "...mp4",
+      // "c1": "...mp4", ...}}` with 5,000 keys) would otherwise run this
+      // entire entries loop to completion in one call, appending far past
+      // `_maxCandidates` before `walk`'s outer loop ever gets a chance to
+      // re-check the cap between popped frames.
+      if (directUrl != null && out.length < _maxCandidates) {
         out.add(JsonMediaCandidate(
           url: directUrl,
           width: _readInt(node, _widthKeys),
           height: _readInt(node, _heightKeys) ?? _heightFromQuality(node),
           bitrate: _readInt(node, _bitrateKeys),
           contextBacked: playerish,
+          capabilities: _capabilitiesFromSiblings(node),
         ));
       }
       for (final entry in node.entries) {
+        if (out.length >= _maxCandidates || stack.length >= _maxVisitedNodes) break;
         final key = entry.key.toString().toLowerCase();
         final value = entry.value;
         final childPlayerish = playerish || _playerContainerKeys.contains(key);
@@ -187,11 +213,12 @@ class JsonMediaWalker {
     }
     if (node is List) {
       for (final item in node) {
+        if (out.length >= _maxCandidates || stack.length >= _maxVisitedNodes) break;
         stack.add(_WalkFrame(item, depth + 1, inheritedPlayerish));
       }
       return;
     }
-    if (node is String && _looksLikeMediaUrl(node)) {
+    if (node is String && _looksLikeMediaUrl(node) && out.length < _maxCandidates) {
       out.add(JsonMediaCandidate(url: node, contextBacked: inheritedPlayerish));
     }
   }
@@ -237,6 +264,36 @@ class JsonMediaWalker {
       if (value is! String) continue;
       final match = _qualityHeightPattern.firstMatch(value);
       if (match != null) return int.tryParse(match.group(1)!);
+    }
+    return null;
+  }
+
+  /// Reads a sibling `mimeType`/`type`/`codecs` value out of [node] (the
+  /// same object [url] itself was found in) and turns it into a positive
+  /// video/audio reading, via the same recognizers `browser_capture`'s own
+  /// mid-download codec sniffing uses ([FormatCapabilities.fromMimeType]/
+  /// [FormatCapabilities.fromHlsCodecs]). Only a *decisive* reading (video
+  /// XOR audio, e.g. Facebook's DASH renditions which are always one or
+  /// the other, never both) is trusted here - the ambiguous "muxed"
+  /// default both of those helpers fall back to on an unrecognized value
+  /// is not itself new information, so it is not worth returning (the
+  /// caller already assumes muxed when this returns null).
+  static FormatCapabilities? _capabilitiesFromSiblings(Map node) {
+    for (final entry in node.entries) {
+      final key = entry.key.toString().toLowerCase();
+      final value = entry.value;
+      if (value is! String) continue;
+      final looksLikeMimeType = _mimeTypeKeys.contains(key) || (key == 'type' && value.contains('/'));
+      if (!looksLikeMimeType) continue;
+      final capabilities = FormatCapabilities.fromMimeType(value);
+      if (capabilities.hasVideo != capabilities.hasAudio) return capabilities;
+    }
+    for (final entry in node.entries) {
+      final key = entry.key.toString().toLowerCase();
+      final value = entry.value;
+      if (value is! String || !_codecsKeys.contains(key)) continue;
+      final capabilities = FormatCapabilities.fromHlsCodecs(value);
+      if (capabilities.hasVideo != capabilities.hasAudio) return capabilities;
     }
     return null;
   }

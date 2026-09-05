@@ -2,6 +2,14 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+/// Policy note (`docs/plan-phase5-coverage.md` Lane D review round 2):
+/// this reproduces Bilibili's own public web-player signing contract -
+/// a public signing constant (the mixin-key table below) shipped in
+/// Bilibili's own JavaScript and republished by every third-party
+/// client, applied the same documented way Bilibili's own player applies
+/// it. No challenge solving, no fingerprint spoofing. If Bilibili changes
+/// this contract, this stops working and we stop - we do not evade.
+///
 /// Signs a Bilibili API request's query parameters with the "WBI"
 /// (`w_rid`/`wts`) scheme most of `api.bilibili.com`'s player/interface
 /// endpoints have required since 2023, including the DASH `playurl` this

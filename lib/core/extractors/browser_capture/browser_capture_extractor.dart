@@ -12,7 +12,9 @@ import 'captured_media_classifier.dart';
 import '../../net/host_policy.dart';
 import 'capture_attempt.dart';
 import 'capture_drive_loop.dart';
+import 'main_document_status_tracker.dart';
 import 'network_signal_recorder.dart';
+import 'page_load_waiter.dart';
 import 'page_meta_reader.dart';
 import 'page_status_detector.dart';
 import 'page_status_exceptions.dart';
@@ -136,11 +138,15 @@ class BrowserCaptureExtractor implements MediaExtractor {
   Future<MediaInfo> _captureWith(DevtoolsSession session, Uri url, {required void Function(bool) onLoadFired}) async {
     final candidates = <String, CapturedMediaCandidate>{};
     final segmentUrls = <String>{};
-    int? mainDocumentStatus;
+    final mainDocStatus = MainDocumentStatusTracker();
 
     final subscription = session.events.listen((event) {
       _observe(event, candidates, segmentUrls);
-      mainDocumentStatus ??= _mainDocumentStatus(event);
+      mainDocStatus.observe(
+        event,
+        navigatedUrl: url,
+        isTopLevelSession: !session.childSessionIds.contains(event.sessionId),
+      );
       // Independent of the classification above: adjudicated (and, off
       // this event stream, replied to) on its own regardless of whether
       // this event also happened to be media - see PrivateDestinationGuard.
@@ -148,7 +154,7 @@ class BrowserCaptureExtractor implements MediaExtractor {
     });
     try {
       await session.send('Page.navigate', {'url': url.toString()});
-      onLoadFired(await _waitForLoad(session));
+      onLoadFired(await _waitForLoad(session, candidates));
 
       // Fail fast on a login wall, a bot-verification interstitial (never
       // solved - see PageStatusDetector), or a 404: none of these three
@@ -157,13 +163,20 @@ class BrowserCaptureExtractor implements MediaExtractor {
       // nothing to gain by running that whole budget first (diagnostic
       // run, docs/plan-phase5-coverage.md: Reddit alone burned 40s on a
       // "Prove your humanity" page this way before this check existed).
-      final earlySignal = await _pageStatusSignal(session, url, mainDocumentStatus);
+      final earlySignal = await _pageStatusSignal(session, url, mainDocStatus.status);
       if (earlySignal != null) throw PageStatusExceptions.forSignal(earlySignal);
 
       await _driveCapture(session, candidates);
 
       final domVideoUrls = await _domVideoElementUrls(session);
       await _backfillFromPerformanceEntries(session, candidates, segmentUrls);
+      // Round 5 (real-download-gate regression): a post-hoc pass over the
+      // *complete* set of network-observed candidates - only a group of
+      // 3+ can distinguish a fragment sequence from a few coincidentally
+      // numbered whole files, so this cannot run per-event. See
+      // NetworkSignalRecorder.reclassifyFragmentedSiblings's own doc
+      // comment.
+      NetworkSignalRecorder.reclassifyFragmentedSiblings(candidates, segmentUrls);
       var finalCandidates = CapturedMediaRanker.rank(candidates.values.toList(growable: false), domVideoUrls);
 
       HtmlSniffResult? domFallback;
@@ -193,7 +206,7 @@ class BrowserCaptureExtractor implements MediaExtractor {
       }
 
       if (finalCandidates.isEmpty) {
-        throw await _noMediaException(session, url, domFallback, mainDocumentStatus);
+        throw await _noMediaException(session, url, domFallback, mainDocStatus.status);
       }
 
       // Reject before doing anything further with these URLs (our own
@@ -262,19 +275,6 @@ class BrowserCaptureExtractor implements MediaExtractor {
     }
   }
 
-  /// The HTTP status of the page's own top-level HTML document (the
-  /// first `text/html` response seen), used to distinguish a genuine
-  /// `NOT_FOUND` from an SPA shell that always returns 200 regardless of
-  /// what it then renders.
-  int? _mainDocumentStatus(CdpEvent event) {
-    if (event.method != 'Network.responseReceived') return null;
-    final response = event.params['response'];
-    if (response is! Map) return null;
-    final mimeType = response['mimeType'] as String?;
-    if (mimeType == null || !mimeType.toLowerCase().startsWith('text/html')) return null;
-    return response['status'] as int?;
-  }
-
   Future<MediaExtractionException> _noMediaException(
     DevtoolsSession session,
     Uri sourceUrl,
@@ -302,25 +302,13 @@ class BrowserCaptureExtractor implements MediaExtractor {
   }
 
   /// Whether `Page.loadEventFired` was actually observed within
-  /// [loadTimeout] - used by [_attemptCapture]/[extract] to decide whether
-  /// a media-less result is worth retrying headless (a page that never
-  /// finished loading at all is a much stronger "this session's render
-  /// may itself be the problem" signal than one that loaded fine and
-  /// simply had no media).
-  Future<bool> _waitForLoad(DevtoolsSession session) async {
-    final loadCompleter = Completer<void>();
-    final loadSub = session.events.listen((event) {
-      if (event.method == 'Page.loadEventFired' && !loadCompleter.isCompleted) {
-        loadCompleter.complete();
-      }
-    });
-    try {
-      await loadCompleter.future.timeout(loadTimeout, onTimeout: () {});
-      return loadCompleter.isCompleted;
-    } finally {
-      await loadSub.cancel();
-    }
-  }
+  /// See [PageLoadWaiter.wait]. Used by [_attemptCapture]/[extract] to
+  /// decide whether a media-less result is worth retrying headless (a page
+  /// that never finished loading at all is a much stronger "this
+  /// session's render may itself be the problem" signal than one that
+  /// loaded fine and simply had no media).
+  Future<bool> _waitForLoad(DevtoolsSession session, Map<String, CapturedMediaCandidate> candidates) =>
+      PageLoadWaiter.wait(session, candidates, loadTimeout: loadTimeout);
 
   /// Delegates to [CaptureDriveLoop.run] - see that class for the actual
   /// wait/retry/poll policy (kept out of this file to stay under the

@@ -23,18 +23,22 @@ class DrmPlaylistScanner {
   static const Set<String> _drmMethods = {'sample-aes', 'sample-aes-ctr'};
 
   /// `KEYFORMAT` substrings that name a known DRM system regardless of
-  /// `METHOD`: FairPlay's streaming key delivery format, and Widevine's
-  /// system UUID (`edef8ba9-79d6-4ace-a3c8-27dcd51d21ed`, commonly written
-  /// as `urn:uuid:edef8ba9-...` in a KEYFORMAT value).
+  /// `METHOD`: FairPlay's streaming key delivery format, Widevine's system
+  /// UUID (`edef8ba9-79d6-4ace-a3c8-27dcd51d21ed`), PlayReady's system UUID
+  /// (`9a04f079-9840-4286-ab92-e65be0885f95`), and PlayReady's bare scheme
+  /// name - each commonly written as `urn:uuid:<uuid>` in a KEYFORMAT
+  /// value.
   static const List<String> _drmKeyFormatMarkers = [
     'com.apple.streamingkeydelivery',
-    'urn:uuid:edef8ba9',
+    'urn:uuid:edef8ba9', // Widevine system ID
+    'urn:uuid:9a04f079', // PlayReady system ID
+    'com.microsoft.playready',
   ];
 
   /// True when [playlistText] (an HLS master, media, or variant playlist)
   /// carries an `#EXT-X-KEY`/`#EXT-X-SESSION-KEY` tag whose `METHOD` is
   /// `SAMPLE-AES`/`SAMPLE-AES-CTR`, or whose `KEYFORMAT` names a known DRM
-  /// system.
+  /// system (FairPlay, Widevine, or PlayReady).
   static bool isHlsDrmProtected(String playlistText) {
     for (final match in _extXKeyPattern.allMatches(playlistText)) {
       final attrs = match.group(1) ?? '';
@@ -47,14 +51,18 @@ class DrmPlaylistScanner {
   }
 
   /// True when [manifestText] (a DASH `.mpd` body) carries a
-  /// `ContentProtection` element, a `cenc:pssh` box, a `default_KID`
-  /// attribute, or a `KEYFORMAT` value - any of which mean the referenced
-  /// segments use common encryption (Widevine/PlayReady DASH DRM).
+  /// `ContentProtection` element (including one whose `schemeIdUri` names
+  /// the Widevine or PlayReady system UUID directly), a `cenc:pssh` box, a
+  /// `cenc:default_KID`/`default_KID` attribute, or a `KEYFORMAT` value -
+  /// any of which mean the referenced segments use common encryption
+  /// (Widevine/PlayReady DASH DRM).
   static bool isMpdDrmProtected(String manifestText) {
     final lower = manifestText.toLowerCase();
     return lower.contains('contentprotection') ||
         lower.contains('cenc:pssh') ||
         lower.contains('default_kid') ||
-        lower.contains('keyformat');
+        lower.contains('keyformat') ||
+        lower.contains('urn:uuid:edef8ba9') ||
+        lower.contains('urn:uuid:9a04f079');
   }
 }

@@ -35,7 +35,7 @@ class PageStatusExceptions {
       case null:
         return const MediaExtractionException(
           'NO_MEDIA_FOUND',
-          'The headless browser did not observe any media requests while '
+          'The browser capture did not observe any media requests while '
               'loading this page. The page may require login, or the '
               'content may be private or removed.',
         );

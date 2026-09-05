@@ -5,15 +5,31 @@ import '../media_models.dart';
 /// `TwitchExtractor`). Kept free of any I/O so it can be exercised
 /// entirely against `test/fixtures/twitch_clip_response.json`.
 ///
-/// Not live-verified (`docs/plan-phase5-coverage.md` Lane D report):
-/// finding a still-existing clip slug and confirming the
-/// `playbackAccessToken`-signed `sourceURL` query-param shape end to end
-/// was not completed within this pass's request budget. The shape here
-/// (`clip.videoQualities[].sourceURL` + `clip.playbackAccessToken.{value,
-/// signature}` appended as `?sig=<signature>&token=<value>`) matches the
-/// long-stable, widely-documented public contract every third-party
-/// Twitch clip downloader uses; treat as needing a field re-check before
-/// relying on it.
+/// Live-confirmed 2026-09-05 against a real, still-existing clip
+/// (`docs/plan-phase5-coverage.md` Lane D follow-up,
+/// `clips.twitch.tv/AnimatedOptimisticWasabiVoteNay`) that the raw
+/// (non-persisted) GQL query `TwitchExtractor` builds for this always
+/// gets `clip: null` back - even a bare `{ clip(slug: "...") {
+/// __typename } }` with no other fields. That is different from the VOD
+/// path's `videoPlaybackAccessToken`, which works fine unauthenticated as
+/// a raw query: Twitch's root `clip` field appears to be restricted to
+/// registered *persisted* queries only (a known-shape anti-scraping
+/// measure - silently null, not an error, for anything else). The
+/// specific persisted query Twitch's own web client uses for this
+/// (commonly named `VideoAccessToken_Clip` in public documentation) was
+/// searched for across the clip page's own HTML and all 18 JS bundles it
+/// loads on initial page load (`grep` for `VideoAccessToken_Clip` and
+/// `sha256Hash`) and not found - consistent with it living in a
+/// component chunk that only loads once the video player itself mounts
+/// (the same lazy-loading pattern `SoundCloudClientIdResolver`'s doc
+/// documents for `client_id`), which a plain page fetch does not
+/// trigger. Until that hash is found (needs a browser-observed network
+/// request, not a static bundle scan), `TwitchExtractor` correctly
+/// surfaces `CHALLENGE_FAILED` for every clip and falls through to
+/// `BrowserCaptureExtractor`. The `sourceURL` + `?sig=<signature>&
+/// token=<value>` signing shape below is otherwise the long-stable,
+/// widely-documented public contract every third-party Twitch clip
+/// downloader uses, kept ready for once the query call itself is fixed.
 class TwitchClipParser {
   const TwitchClipParser();
 
