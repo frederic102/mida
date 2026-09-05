@@ -131,4 +131,42 @@ void main() {
       expect(lastUnit < 0xD800 || lastUnit > 0xDFFF, isTrue, reason: 'result ends mid-surrogate-pair');
     });
   });
+
+  group('FileUtils folder-opener test seam (never spawn a real OS window from a test)', () {
+    tearDown(() {
+      FileUtils.folderOpenerOverride = null;
+    });
+
+    test('openFolder calls the override instead of the real OS opener', () async {
+      final calls = <String>[];
+      FileUtils.folderOpenerOverride = (path) async => calls.add(path);
+
+      await FileUtils.openFolder('/tmp/some/download/dir');
+
+      expect(calls, ['/tmp/some/download/dir'],
+          reason: 'the override must be invoked with the exact path, and be '
+              'the only thing invoked, i.e. no real Process.run happened '
+              '(that would hang/pop a window and this test would never '
+              'reach this assertion in a sandboxed CI runner)');
+    });
+
+    test('openFileLocation calls the override instead of the real OS opener', () async {
+      final calls = <String>[];
+      FileUtils.folderOpenerOverride = (path) async => calls.add(path);
+
+      await FileUtils.openFileLocation('/tmp/some/download/dir/video.mp4');
+
+      expect(calls, ['/tmp/some/download/dir/video.mp4']);
+    });
+
+    test('with no override set, running under flutter test still does not throw '
+        '(FLUTTER_TEST safety net)', () async {
+      // Belt-and-suspenders: even if a caller forgets folderOpenerOverride,
+      // FileUtils must not attempt a real Process.run while FLUTTER_TEST=true
+      // (set by the flutter test runner itself). This completing at all,
+      // quickly and without spawning anything, is the assertion.
+      await FileUtils.openFolder('/tmp/whatever');
+      await FileUtils.openFileLocation('/tmp/whatever/file.txt');
+    });
+  });
 }

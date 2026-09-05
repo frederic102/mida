@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../extractors/media_models.dart';
 import 'browser_executable_locator.dart';
+import 'browser_profile.dart';
 import 'cdp_client.dart';
 
 /// The surface `BrowserCaptureExtractor` needs from a live DevTools
@@ -63,6 +64,28 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     return port;
   }
 
+  /// A fresh empty temp dir, unless [useBrowserLoginSession] is on and
+  /// staging [executable]'s real profile (see [BrowserProfile]) succeeds -
+  /// staging failure (unknown browser kind, no profile present, copy
+  /// error) falls back to the same empty temp dir as when the toggle is
+  /// off, never throws. Same fallback shape as
+  /// `BrowserPageFetcher._resolveProfileDir`.
+  static Future<Directory> _resolveProfileDir(
+    String executable, {
+    required bool useBrowserLoginSession,
+    Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
+  }) async {
+    if (useBrowserLoginSession) {
+      final kind = BrowserProfile.kindForExecutable(executable);
+      if (kind != null) {
+        final stage = stageProfileDir ?? BrowserProfile.stageCopy;
+        final staged = await stage(kind);
+        if (staged != null) return staged;
+      }
+    }
+    return Directory.systemTemp.createTempSync('mida_cdp_');
+  }
+
   /// Launches a fresh headless browser instance and attaches to a new
   /// `about:blank` target, with `Network`/`Page`/`Runtime` already enabled
   /// on it. Throws [MediaExtractionException] (`BROWSER_MISSING` when no
@@ -73,6 +96,8 @@ class BrowserDevtoolsSession implements DevtoolsSession {
   static Future<BrowserDevtoolsSession> launch({
     List<String> Function()? candidatePaths,
     Duration connectTimeout = const Duration(seconds: 10),
+    bool useBrowserLoginSession = false,
+    Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
   }) async {
     final lookup = await BrowserExecutableLocator.find(fixedCandidatePaths: candidatePaths);
     final executable = lookup.path;
@@ -85,7 +110,11 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     }
 
     final port = await _reserveFreePort();
-    final profileDir = Directory.systemTemp.createTempSync('mida_cdp_');
+    final profileDir = await _resolveProfileDir(
+      executable,
+      useBrowserLoginSession: useBrowserLoginSession,
+      stageProfileDir: stageProfileDir,
+    );
     Process? process;
     try {
       process = await Process.start(executable, [

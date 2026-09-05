@@ -6,10 +6,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 class SettingsService extends ChangeNotifier {
   static const String _keyDownloadPath = 'download_path';
   static const String _keyThemeMode = 'theme_mode';
+  static const String _keyUseBrowserLoginSession = 'use_browser_login_session';
 
   SharedPreferences? _prefs;
   String _downloadPath = '';
   bool _isDarkMode = false;
+
+  /// Settings: "Use browser login session". Off by default (privacy: no
+  /// profile copy happens unless explicitly turned on). See
+  /// `docs/plan-phase4-cookies-resilience.md` SCOPE 2.
+  bool _useBrowserLoginSession = false;
 
   // Web fallback storage (for HTTP environments where localStorage is blocked)
   final Map<String, dynamic> _memoryStorage = {};
@@ -17,6 +23,7 @@ class SettingsService extends ChangeNotifier {
 
   String get downloadPath => _downloadPath;
   bool get isDarkMode => _isDarkMode;
+  bool get useBrowserLoginSession => _useBrowserLoginSession;
 
   Future<void> init() async {
     if (kIsWeb) {
@@ -24,16 +31,19 @@ class SettingsService extends ChangeNotifier {
         _prefs = await SharedPreferences.getInstance();
         _downloadPath = _prefs!.getString(_keyDownloadPath) ?? '';
         _isDarkMode = _prefs!.getBool(_keyThemeMode) ?? false;
+        _useBrowserLoginSession = _prefs!.getBool(_keyUseBrowserLoginSession) ?? false;
       } catch (e) {
         debugPrint('SharedPreferences blocked, using memory storage: $e');
         _useMemoryStorage = true;
         _downloadPath = '';
         _isDarkMode = false;
+        _useBrowserLoginSession = false;
       }
     } else {
       _prefs = await SharedPreferences.getInstance();
       _downloadPath = _prefs!.getString(_keyDownloadPath) ?? await _getDefaultDownloadPath();
       _isDarkMode = _prefs!.getBool(_keyThemeMode) ?? false;
+      _useBrowserLoginSession = _prefs!.getBool(_keyUseBrowserLoginSession) ?? false;
     }
     notifyListeners();
   }
@@ -103,5 +113,15 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> toggleTheme() async {
     await setDarkMode(!_isDarkMode);
+  }
+
+  Future<void> setUseBrowserLoginSession(bool value) async {
+    _useBrowserLoginSession = value;
+    if (_useMemoryStorage) {
+      _memoryStorage[_keyUseBrowserLoginSession] = value;
+    } else {
+      await _prefs?.setBool(_keyUseBrowserLoginSession, value);
+    }
+    notifyListeners();
   }
 }

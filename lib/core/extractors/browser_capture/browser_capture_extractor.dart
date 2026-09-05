@@ -19,12 +19,24 @@ import 'page_status_detector.dart';
 /// `ExtractorRegistry` - it is slow (seconds, not milliseconds) and only
 /// worth paying for once cheaper detection has already failed.
 class BrowserCaptureExtractor implements MediaExtractor {
-  final Future<DevtoolsSession> Function({Duration connectTimeout}) _launchSession;
+  /// Test-only override (tests own their own launch behavior entirely,
+  /// including whatever login-session shape they want). Null in
+  /// production, where [_launchSession] calls [BrowserDevtoolsSession.launch]
+  /// directly with [useBrowserLoginSession].
+  final Future<DevtoolsSession> Function({Duration connectTimeout})? _sessionLauncher;
   final CapturedFormatBuilder _formatBuilder;
   final Duration connectTimeout;
   final Duration loadTimeout;
   final Duration postLoadDelay;
   final Duration autoplayRetryDelay;
+
+  /// When true (Settings: "Use browser login session"), the launched
+  /// browser uses a staged copy of the user's real profile so the capture
+  /// sees their own login (e.g. Vimeo's plaintext HLS, Instagram's
+  /// audio-bearing rendition). Ignored when [sessionLauncher] is supplied
+  /// (tests own their own launch behavior). Default false: byte-identical
+  /// to today. See `docs/plan-phase4-cookies-resilience.md` SCOPE 1-2.
+  final bool useBrowserLoginSession;
 
   BrowserCaptureExtractor({
     Future<DevtoolsSession> Function({Duration connectTimeout})? sessionLauncher,
@@ -33,11 +45,26 @@ class BrowserCaptureExtractor implements MediaExtractor {
     this.loadTimeout = const Duration(seconds: 20),
     this.postLoadDelay = const Duration(seconds: 3),
     this.autoplayRetryDelay = const Duration(seconds: 5),
-  })  : _launchSession = sessionLauncher ?? BrowserDevtoolsSession.launch,
+    this.useBrowserLoginSession = false,
+  })  : _sessionLauncher = sessionLauncher,
         _formatBuilder = CapturedFormatBuilder(httpClientFactory: httpClientFactory);
 
   @override
   bool canHandle(Uri url) => url.scheme == 'http' || url.scheme == 'https';
+
+  /// Production default (no [_sessionLauncher] injected) launches directly
+  /// with [useBrowserLoginSession] threaded through, rather than closing
+  /// over it in a stored function literal (a function literal cannot
+  /// itself declare an optional parameter's default value in Dart, which
+  /// the `{Duration connectTimeout}` shape here would otherwise need).
+  Future<DevtoolsSession> _launchSession({required Duration connectTimeout}) {
+    final launcher = _sessionLauncher;
+    if (launcher != null) return launcher(connectTimeout: connectTimeout);
+    return BrowserDevtoolsSession.launch(
+      connectTimeout: connectTimeout,
+      useBrowserLoginSession: useBrowserLoginSession,
+    );
+  }
 
   @override
   Future<MediaInfo> extract(Uri url) async {

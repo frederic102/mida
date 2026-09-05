@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/media_models.dart';
 import 'package:mida/core/extractors/tiktok/tiktok_extractor.dart';
+import 'package:mida/core/net/retry_policy.dart';
 
 /// Builds a synthetic wafchallenge page whose answer is [answerIndex] (kept
 /// small so the extractor's real brute-force solver finishes instantly in
@@ -131,8 +132,13 @@ void main() {
   setUp(() async => server = await _FakeTikTokServer.start());
   tearDown(() => server.close());
 
-  TikTokExtractor buildExtractor() => TikTokExtractor(
+  // Every test in this file goes through a local in-memory HttpServer, so
+  // an instant sleeper does not skip anything real - it just keeps a test
+  // that happens to exercise the RATE_LIMITED/NETWORK retry path (Phase 4
+  // section 3) from burning a real ~1-8s backoff wait.
+  TikTokExtractor buildExtractor({RetryPolicy? retryPolicy}) => TikTokExtractor(
         requestUrlBuilder: (url) => server.baseUri.replace(path: url.path, query: url.query),
+        retryPolicy: retryPolicy ?? RetryPolicy(sleeper: (_) async {}),
       );
 
   group('TikTokExtractor.canHandle', () {
@@ -173,6 +179,12 @@ void main() {
         buildExtractor().extract(Uri.parse('https://www.tiktok.com/@hankgreen1/video/7047596209028074758')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'CHALLENGE_FAILED')),
       );
+      // Guard-can-fail (Phase 4 section 3): CHALLENGE_FAILED is terminal
+      // and must NOT be retried. If `RetryPolicy`'s default classification
+      // ever started treating it as retryable, this attempt sequence would
+      // repeat (challenge hop + solved-cookie hop again) and this count
+      // would climb past 2.
+      expect(server.cookieHeadersSeen.length, 2, reason: 'terminal CHALLENGE_FAILED must not retry the page fetch');
     });
 
     test('RATE_LIMITED (not CHALLENGE_FAILED) when the first response is the anti-bot shell '
@@ -182,6 +194,11 @@ void main() {
         buildExtractor().extract(Uri.parse('https://www.tiktok.com/@hankgreen1/video/7047596209028074758')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'RATE_LIMITED')),
       );
+      // Guard-can-fail: RATE_LIMITED IS retryable, so the default policy's
+      // 4 attempts each hit the (still-shelled) server once: if the retry
+      // wiring in `TikTokExtractor.extract` were ever removed, this would
+      // drop to 1.
+      expect(server.cookieHeadersSeen.length, 4, reason: 'RATE_LIMITED must be retried up to the policy max');
     });
 
     test('RATE_LIMITED when the *second* response (after a solved challenge) is the anti-bot shell', () async {
@@ -195,11 +212,35 @@ void main() {
           if (hits > 1) server.serveAntiBotShell = true;
           return server.baseUri.replace(path: url.path, query: url.query);
         },
+        retryPolicy: RetryPolicy(sleeper: (_) async {}),
       );
       await expectLater(
         extractor.extract(Uri.parse('https://www.tiktok.com/@hankgreen1/video/7047596209028074758')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'RATE_LIMITED')),
       );
+    });
+
+    test('retries the anti-bot shell via the backoff policy and eventually succeeds once it clears '
+        '(Phase 4 section 3 guard: retry DOES fire and can recover, not just give up)', () async {
+      server.serveAntiBotShell = true;
+      var hits = 0;
+      final extractor = TikTokExtractor(
+        requestUrlBuilder: (url) {
+          hits += 1;
+          // Stays shelled for the first two attempts, then TikTok "cools
+          // down" and starts serving the real challenge again from the
+          // third hit onward - modeling the live 2026-09-05 pattern this
+          // whole retry policy exists for.
+          if (hits > 2) server.serveAntiBotShell = false;
+          return server.baseUri.replace(path: url.path, query: url.query);
+        },
+        retryPolicy: RetryPolicy(sleeper: (_) async {}),
+      );
+
+      final info = await extractor.extract(Uri.parse('https://www.tiktok.com/@hankgreen1/video/7047596209028074758'));
+
+      expect(info.formats, isNotEmpty);
+      expect(hits, greaterThan(2), reason: 'must have retried past the initial shelled hits before recovering');
     });
   });
 

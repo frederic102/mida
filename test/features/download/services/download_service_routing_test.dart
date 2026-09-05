@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/media_extractor.dart';
 import 'package:mida/core/extractors/media_models.dart';
+import 'package:mida/core/net/retry_policy.dart';
 import 'package:mida/core/services/settings_service.dart';
+import 'package:mida/core/utils/file_utils.dart';
 import 'package:mida/features/download/services/download_service_io.dart';
 
 class _FakeExtractor implements MediaExtractor {
@@ -17,6 +19,18 @@ class _FakeExtractor implements MediaExtractor {
 }
 
 void main() {
+  // None of the cases in this file reach DownloadStatus.completed today
+  // (they all exercise error paths), so FileUtils.openFolder is never
+  // called here yet - but set the same test seam any test file touching
+  // DownloadService.download() should set, so a future success-path case
+  // added here can't silently pop a real Explorer/Finder window.
+  setUp(() {
+    FileUtils.folderOpenerOverride = (_) async {};
+  });
+  tearDown(() {
+    FileUtils.folderOpenerOverride = null;
+  });
+
   // A non-empty formats list: `MediaInfo` with `formats: []` is not
   // success (`ExtractorRegistry.resolveInfo` treats that as
   // NO_MEDIA_FOUND and continues the fall-through chain), so a fake
@@ -99,6 +113,49 @@ void main() {
       expect(service.currentTask!.status, DownloadStatus.error);
       expect(service.currentTask!.title, 'generic-looking title');
       expect(service.currentTask!.error, contains('No downloadable formats'));
+    });
+
+    // Phase 4 section 3, item 4: a RATE_LIMITED extraction failure's
+    // final user-facing message must point at the Settings toggle another
+    // lane adds, by its exact label.
+    test('a RATE_LIMITED extraction failure suggests enabling "Use browser login session" in Settings', () async {
+      final registry = ExtractorRegistry(
+        [
+          _FakeExtractor(
+            (u) => u.host == 'ratelimited.example',
+            (url) async => throw const MediaExtractionException('RATE_LIMITED', 'This site is throttling requests.'),
+          ),
+        ],
+        // Hermetic: without this, `ExtractorRegistry`'s real default
+        // policy would retry once with a real ~1s backoff sleep.
+        retryPolicy: RetryPolicy(sleeper: (_) async {}),
+      );
+      final service = DownloadService(SettingsService(), registry: registry);
+
+      await service.download('https://ratelimited.example/page', DownloadType.video);
+
+      expect(service.currentTask!.status, DownloadStatus.error);
+      expect(service.currentTask!.error, contains('Use browser login session'));
+    });
+
+    // Guard-can-fail: a terminal (non-RATE_LIMITED) extraction failure
+    // must NOT get the browser-login suggestion appended - it would be
+    // misleading (a signed-in session cannot fix a private/deleted video).
+    // If `_describeDownloadError`'s status check were ever loosened to
+    // fire for every `MediaExtractionException`, this goes red.
+    test('a NOT_FOUND extraction failure does not suggest the browser login session', () async {
+      final registry = ExtractorRegistry([
+        _FakeExtractor(
+          (u) => u.host == 'notfound.example',
+          (url) async => throw const MediaExtractionException('NOT_FOUND', 'This video no longer exists.'),
+        ),
+      ]);
+      final service = DownloadService(SettingsService(), registry: registry);
+
+      await service.download('https://notfound.example/page', DownloadType.video);
+
+      expect(service.currentTask!.status, DownloadStatus.error);
+      expect(service.currentTask!.error, isNot(contains('Use browser login session')));
     });
   });
 }

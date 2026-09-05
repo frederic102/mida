@@ -53,9 +53,11 @@ class GenericExtractor implements MediaExtractor {
     MediaUrlProbe? probe,
     BrowserPageFetcher? browserFetcher,
     this.allowPrivateHosts = false,
+    bool useBrowserLoginSession = false,
   })  : _httpClientFactory = httpClientFactory ?? HttpClient.new,
         _probe = probe ?? MediaUrlProbe(httpClientFactory: httpClientFactory, allowPrivateHosts: allowPrivateHosts),
-        _browserFetcher = browserFetcher ?? BrowserPageFetcher(allowPrivateHosts: allowPrivateHosts);
+        _browserFetcher = browserFetcher ??
+            BrowserPageFetcher(allowPrivateHosts: allowPrivateHosts, useBrowserLoginSession: useBrowserLoginSession);
 
   static final RegExp _emePattern = RegExp(r'\bEME\b', caseSensitive: false);
   static const List<String> _drmMarkers = [

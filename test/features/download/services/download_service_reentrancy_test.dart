@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/media_extractor.dart';
 import 'package:mida/core/extractors/media_models.dart';
 import 'package:mida/core/services/settings_service.dart';
+import 'package:mida/core/utils/file_utils.dart';
 import 'package:mida/features/download/services/download_service_io.dart';
 import 'package:mida/features/download/services/media_download_pipeline.dart';
 
@@ -54,6 +55,20 @@ class _SlowPipeline extends MediaDownloadPipeline {
 }
 
 void main() {
+  // A completed download makes DownloadService open the user's download
+  // folder in a real file-manager window. These fakes never touch the
+  // filesystem, so that would otherwise pop a real Explorer/Finder window
+  // as a side effect of running `flutter test` (observed in practice: see
+  // the file_utils_test.dart folder-opener group for the general fix).
+  final openedFolders = <String>[];
+  setUp(() {
+    openedFolders.clear();
+    FileUtils.folderOpenerOverride = (path) async => openedFolders.add(path);
+  });
+  tearDown(() {
+    FileUtils.folderOpenerOverride = null;
+  });
+
   test('a second download() call while one is already in flight is a no-op (reentrancy guard)', () async {
     final pipeline = _SlowPipeline();
     final registry = ExtractorRegistry([
@@ -88,6 +103,9 @@ void main() {
     await firstCall;
 
     expect(service.currentTask?.status, DownloadStatus.completed);
+    expect(openedFolders, hasLength(1),
+        reason: 'exactly one real "open folder" call, via the override, no '
+            'real OS process spawned');
   });
 
   test('once a download completes, a later call is free to start a new one', () async {
@@ -110,5 +128,6 @@ void main() {
 
     await service.download('https://generic.example/page', DownloadType.video);
     expect(firstPipeline.callCount, 2, reason: 'a call after the previous one finished must actually run');
+    expect(openedFolders, hasLength(2), reason: 'each completed run opens the folder once, via the override');
   });
 }

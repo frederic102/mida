@@ -5,6 +5,7 @@ import 'dart:io';
 import '../extractors/media_models.dart';
 import '../net/host_policy.dart';
 import 'browser_executable_locator.dart';
+import 'browser_profile.dart';
 
 /// Finds a system browser and drives it headless to dump the fully
 /// rendered DOM of a page, for sites that only populate `<video>` tags /
@@ -30,11 +31,26 @@ class BrowserPageFetcher {
   /// from here (see [fetchDom] doc).
   final bool allowPrivateHosts;
 
+  /// When true (Settings: "Use browser login session"), the launch uses a
+  /// staged copy of the user's real browser profile instead of an empty
+  /// one, so the rendered page sees the user's own cookies. Default false
+  /// keeps today's behavior byte-identical. See
+  /// `docs/plan-phase4-cookies-resilience.md` SCOPE 1-2.
+  final bool useBrowserLoginSession;
+
+  /// Test injection point for [useBrowserLoginSession]'s staging step, so
+  /// tests never touch a real browser profile. Defaults to
+  /// [BrowserProfile.stageCopy].
+  final Future<Directory?> Function(BrowserProfileKind kind)? _stageProfileDir;
+
   BrowserPageFetcher({
     List<String> Function()? candidatePaths,
     this.timeout = const Duration(seconds: 60),
     this.allowPrivateHosts = false,
-  }) : _candidatePaths = candidatePaths;
+    this.useBrowserLoginSession = false,
+    Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
+  })  : _candidatePaths = candidatePaths,
+        _stageProfileDir = stageProfileDir;
 
   /// Renders [url] headlessly and returns the dumped DOM as HTML text.
   ///
@@ -63,7 +79,7 @@ class BrowserPageFetcher {
       );
     }
 
-    final profileDir = Directory.systemTemp.createTempSync('mida_browser_');
+    final profileDir = await _resolveProfileDir(executable);
     try {
       return await _renderWith(executable, profileDir, url);
     } finally {
@@ -76,6 +92,23 @@ class BrowserPageFetcher {
         // the extraction result (or error) computed above.
       }
     }
+  }
+
+  /// A fresh empty temp dir, unless [useBrowserLoginSession] is on and
+  /// staging the resolved browser's real profile (see [BrowserProfile])
+  /// succeeds - staging failure (unknown browser kind, no profile present,
+  /// copy error) falls back to the same empty temp dir as when the toggle
+  /// is off, never throws.
+  Future<Directory> _resolveProfileDir(String executable) async {
+    if (useBrowserLoginSession) {
+      final kind = BrowserProfile.kindForExecutable(executable);
+      if (kind != null) {
+        final stage = _stageProfileDir ?? BrowserProfile.stageCopy;
+        final staged = await stage(kind);
+        if (staged != null) return staged;
+      }
+    }
+    return Directory.systemTemp.createTempSync('mida_browser_');
   }
 
   Future<String> _renderWith(String executable, Directory profileDir, Uri url) async {

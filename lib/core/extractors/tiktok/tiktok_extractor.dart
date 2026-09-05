@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../net/retry_policy.dart';
 import '../../utils/url_parser.dart';
 import '../media_extractor.dart';
 import '../media_models.dart';
@@ -45,13 +46,37 @@ class TikTokExtractor implements MediaExtractor {
   /// since TikTok's own page URL *is* the request URL).
   final Uri Function(Uri url) _requestUrlBuilder;
 
+  /// Backs off and retries the page-fetch-and-solve sequence
+  /// ([_fetchAndParse]) when it fails with `RATE_LIMITED`/`NETWORK` (the
+  /// WAF interstitial, an HTTP 429, or a 5xx), per
+  /// `docs/plan-phase4-cookies-resilience.md` section 3. Injectable so
+  /// tests can supply an instant `sleeper` (never a real 1-8s wait) and/or
+  /// a smaller `maxAttempts`; production leaves the default (real backoff,
+  /// 4 attempts).
+  final RetryPolicy _retryPolicy;
+
+  /// Fires with a short human-readable line right before each backoff
+  /// sleep (e.g. "Retrying (rate limited by the site)..."), mirroring the
+  /// `onStatus` shape `MediaDownloadPipeline.download` already uses.
+  /// `TikTokExtractor.extract`'s signature is fixed by the shared
+  /// [MediaExtractor] contract (every extractor implements the same
+  /// `extract(Uri url)`, with no onStatus parameter), so this is a
+  /// constructor-level hook instead: a caller that wants status lines
+  /// during extraction (not just during download) constructs its own
+  /// [TikTokExtractor] with one, rather than the registry needing to know
+  /// about it.
+  final void Function(String message)? onStatus;
+
   TikTokExtractor({
     HttpClient Function()? httpClientFactory,
     TikTokPageParser? parser,
     Uri Function(Uri url)? requestUrlBuilder,
+    RetryPolicy? retryPolicy,
+    this.onStatus,
   })  : _httpClientFactory = httpClientFactory ?? HttpClient.new,
         _parser = parser ?? const TikTokPageParser(),
-        _requestUrlBuilder = requestUrlBuilder ?? _identityUrl;
+        _requestUrlBuilder = requestUrlBuilder ?? _identityUrl,
+        _retryPolicy = retryPolicy ?? RetryPolicy();
 
   static Uri _identityUrl(Uri url) => url;
 
@@ -81,57 +106,79 @@ class TikTokExtractor implements MediaExtractor {
         );
       }
 
-      final cookieJar = <String, String>{};
-      var (statusCode, html) = await _getPage(httpClient, resolved, cookieJar);
-      _checkPageStatus(statusCode);
+      // Only the fetch-and-solve sequence is retried, not the shortlink
+      // resolution or the photo-post check above: those either need no
+      // network call at all or fail with a status (UNSUPPORTED_URL/
+      // UNSUPPORTED_MEDIA) `RetryPolicy`'s default classification already
+      // treats as terminal, so wrapping them would be a no-op at best.
+      return await _retryPolicy.run(
+        () => _fetchAndParse(httpClient, resolved),
+        onRetry: (attempt, error) => onStatus?.call('Retrying (rate limited by the site)...'),
+      );
+    } finally {
+      httpClient.close(force: true);
+    }
+  }
 
+  /// One full attempt at getting the video page and parsing it: fetch,
+  /// solve the PoW challenge if present, re-fetch with the solved cookie,
+  /// parse. Throws `RATE_LIMITED` for the WAF interstitial (either the
+  /// escalated ~44KB shell, or a plain HTTP 429) and `NETWORK` for a 5xx -
+  /// both of which `RetryPolicy`'s default classification retries - and
+  /// `CHALLENGE_FAILED`/`NOT_FOUND`/`UNSUPPORTED_MEDIA` for outcomes a
+  /// retry cannot fix, which it does not retry. Called fresh (new cookie
+  /// jar) on every [_retryPolicy] attempt in [extract].
+  Future<MediaInfo> _fetchAndParse(HttpClient httpClient, Uri resolved) async {
+    final cookieJar = <String, String>{};
+    var (statusCode, html) = await _getPage(httpClient, resolved, cookieJar);
+    _checkPageStatus(statusCode);
+
+    if (!TikTokPageParser.hasUniversalData(html)) {
+      var challenge = TikTokChallengeSolver.parse(html);
+      if (challenge == null) {
+        throw const MediaExtractionException(
+          'RATE_LIMITED',
+          _antiBotShellMessage,
+        );
+      }
+      final solvedIndex = TikTokChallengeSolver.solve(challenge);
+      cookieJar.addAll(TikTokChallengeSolver.buildCookies(challenge, solvedIndex));
+
+      (statusCode, html) = await _getPage(httpClient, resolved, cookieJar);
+      _checkPageStatus(statusCode);
       if (!TikTokPageParser.hasUniversalData(html)) {
-        var challenge = TikTokChallengeSolver.parse(html);
+        challenge = TikTokChallengeSolver.parse(html);
         if (challenge == null) {
+          // Neither `id="cs"` nor the rehydration payload this time
+          // either: TikTok swapped the usual ~1.4KB PoW challenge for a
+          // heavier (~44KB) interstitial that needs a real browser
+          // session to clear, observed live 2026-09-05 after repeated
+          // automated requests from the same network. That is an
+          // anti-bot escalation, not "the solved answer was wrong", so
+          // it gets the same code the statusCode-10204 IP-block path
+          // uses (RATE_LIMITED), which is what lets [_retryPolicy] back
+          // off and retry, and - if every attempt exhausts - lets the
+          // registry fall through to a browser-based extractor instead of
+          // giving up.
           throw const MediaExtractionException(
             'RATE_LIMITED',
             _antiBotShellMessage,
           );
         }
-        final solvedIndex = TikTokChallengeSolver.solve(challenge);
-        cookieJar.addAll(TikTokChallengeSolver.buildCookies(challenge, solvedIndex));
-
-        (statusCode, html) = await _getPage(httpClient, resolved, cookieJar);
-        _checkPageStatus(statusCode);
-        if (!TikTokPageParser.hasUniversalData(html)) {
-          challenge = TikTokChallengeSolver.parse(html);
-          if (challenge == null) {
-            // Neither `id="cs"` nor the rehydration payload this time
-            // either: TikTok swapped the usual ~1.4KB PoW challenge for a
-            // heavier (~44KB) interstitial that needs a real browser
-            // session to clear, observed live 2026-09-05 after repeated
-            // automated requests from the same network. That is an
-            // anti-bot escalation, not "the solved answer was wrong", so
-            // it gets the same code the statusCode-10204 IP-block path
-            // uses (RATE_LIMITED), which is what lets the registry fall
-            // through to a browser-based extractor instead of giving up.
-            throw const MediaExtractionException(
-              'RATE_LIMITED',
-              _antiBotShellMessage,
-            );
-          }
-          throw const MediaExtractionException(
-            'CHALLENGE_FAILED',
-            'TikTok rejected the solved challenge.',
-          );
-        }
+        throw const MediaExtractionException(
+          'CHALLENGE_FAILED',
+          'TikTok rejected the solved challenge.',
+        );
       }
-
-      final requestHeaders = <String, String>{
-        'User-Agent': _userAgent,
-        'Referer': 'https://www.tiktok.com/',
-        if (cookieJar.isNotEmpty) 'Cookie': _cookieHeader(cookieJar),
-      };
-
-      return _parser.parse(html, sourceUrl: resolved, requestHeaders: requestHeaders);
-    } finally {
-      httpClient.close(force: true);
     }
+
+    final requestHeaders = <String, String>{
+      'User-Agent': _userAgent,
+      'Referer': 'https://www.tiktok.com/',
+      if (cookieJar.isNotEmpty) 'Cookie': _cookieHeader(cookieJar),
+    };
+
+    return _parser.parse(html, sourceUrl: resolved, requestHeaders: requestHeaders);
   }
 
   /// Follows shortlink redirects (`vm.tiktok.com/<code>`,

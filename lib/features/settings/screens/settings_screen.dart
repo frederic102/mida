@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/services/platform_service.dart';
+import '../../../core/utils/file_utils.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -25,6 +26,8 @@ class SettingsScreen extends StatelessWidget {
                 _buildStorageSection(context, settings),
                 const SizedBox(height: 24),
                 _buildAppearanceSection(context, settings),
+                const SizedBox(height: 24),
+                _buildBrowserSessionSection(context, settings),
                 const SizedBox(height: 24),
                 _buildAboutSection(context),
               ],
@@ -141,6 +144,42 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildBrowserSessionSection(BuildContext context, SettingsService settings) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.login,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Browser Session',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: const Text('Use browser login session'),
+              subtitle: const Text(
+                "Uses your installed browser's existing login to reach sign-in-only videos.",
+              ),
+              value: settings.useBrowserLoginSession,
+              onChanged: (value) => settings.setUseBrowserLoginSession(value),
+              secondary: const Icon(Icons.cookie_outlined),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAboutSection(BuildContext context) {
     return Card(
       child: Padding(
@@ -244,13 +283,8 @@ class SettingsScreen extends StatelessWidget {
       await directory.create(recursive: true);
     }
 
-    if (Platform.isWindows) {
-      final windowsPath = path.replaceAll('/', '\\');
-      await Process.run('explorer.exe', [windowsPath]);
-    } else if (Platform.isMacOS) {
-      await Process.run('open', [path]);
-    } else if (Platform.isLinux) {
-      await Process.run('xdg-open', [path]);
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      await FileUtils.openFolder(path);
     } else {
       final uri = Uri.directory(path);
       if (await canLaunchUrl(uri)) {

@@ -54,13 +54,7 @@ class _CompressScreenState extends State<CompressScreen> {
     });
   }
 
-  Future<void> _openOutputFolder(String filePath) async {
-    if (Platform.isWindows) {
-      await Process.run('explorer', ['/select,', filePath.replaceAll('/', '\\')]);
-    } else if (Platform.isMacOS) {
-      await Process.run('open', ['-R', filePath]);
-    }
-  }
+  Future<void> _openOutputFolder(String filePath) => FileUtils.openFileLocation(filePath);
 
   int get _targetSizeBytes {
     if (_isCustomSize) {

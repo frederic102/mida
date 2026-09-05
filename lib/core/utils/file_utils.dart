@@ -146,29 +146,42 @@ class FileUtils {
     return '${(progress * 100).toStringAsFixed(1)}%';
   }
 
-  /// Open file location in file explorer (Windows/macOS supported)
-  static Future<void> openFileLocation(String filePath) async {
-    if (Platform.isWindows) {
-      // Windows: explorer /select,"filepath"
-      await Process.run('explorer', ['/select,', filePath]);
-    } else if (Platform.isMacOS) {
-      // macOS: open -R "filepath"
-      await Process.run('open', ['-R', filePath]);
-    } else if (Platform.isLinux) {
-      // Linux: xdg-open (folder only)
-      final dir = File(filePath).parent.path;
-      await Process.run('xdg-open', [dir]);
-    }
-  }
+  /// Test seam: when set, [openFileLocation] and [openFolder] call this
+  /// instead of spawning a real OS file-manager process. Tests should set
+  /// this (and reset it to null in `tearDown`) whenever they exercise a
+  /// success path that reaches either method, so a real Explorer/Finder
+  /// window never appears as a side effect of running `flutter test`.
+  static Future<void> Function(String path)? folderOpenerOverride;
+
+  /// Open file location in file explorer (Windows/macOS/Linux supported)
+  static Future<void> openFileLocation(String filePath) => _open(filePath, select: true);
 
   /// Open folder (e.g., download folder)
-  static Future<void> openFolder(String folderPath) async {
+  static Future<void> openFolder(String folderPath) => _open(folderPath, select: false);
+
+  static Future<void> _open(String path, {required bool select}) async {
+    final override = folderOpenerOverride;
+    if (override != null) {
+      await override(path);
+      return;
+    }
+    // Safety net: even if a test forgets to set folderOpenerOverride, never
+    // spawn a real file-manager process while running under `flutter test`
+    // (which always sets this environment variable).
+    if (Platform.environment['FLUTTER_TEST'] == 'true') return;
+
     if (Platform.isWindows) {
-      await Process.run('explorer', [folderPath]);
+      // Windows accepts both separators for `/select,`, but normalize to
+      // match the OS's own convention rather than relying on that.
+      final windowsPath = path.replaceAll('/', '\\');
+      await Process.run('explorer', select ? ['/select,', windowsPath] : [windowsPath]);
     } else if (Platform.isMacOS) {
-      await Process.run('open', [folderPath]);
+      await Process.run('open', select ? ['-R', path] : [path]);
     } else if (Platform.isLinux) {
-      await Process.run('xdg-open', [folderPath]);
+      // xdg-open only understands folders, so selecting a file location
+      // opens its parent directory instead.
+      final target = select ? File(path).parent.path : path;
+      await Process.run('xdg-open', [target]);
     }
   }
 }

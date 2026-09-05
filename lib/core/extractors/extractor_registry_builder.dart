@@ -18,15 +18,24 @@ import 'youtube/youtube_extractor.dart';
 /// falling through to Generic then BrowserCapture) live in
 /// `ExtractorRegistry.resolveInfo` (`media_extractor.dart`); this function
 /// only builds the ordered list.
-ExtractorRegistry buildExtractorRegistry() {
+///
+/// [useBrowserLoginSession] (Settings: "Use browser login session", off by
+/// default) is threaded only into the two extractors that actually launch
+/// a browser (`GenericExtractor`'s DOM-render fallback and
+/// `BrowserCaptureExtractor`): per
+/// `docs/plan-phase4-cookies-resilience.md` SCOPE 1, plain-HTTP extractors
+/// (YouTube/Twitter/TikTok/Instagram) never get a cookie injected directly
+/// and instead fall through to `BrowserCaptureExtractor` when they need the
+/// login benefit.
+ExtractorRegistry buildExtractorRegistry({bool useBrowserLoginSession = false}) {
   return ExtractorRegistry(
     [
       YoutubeExtractor(),
       TwitterExtractor(),
       TikTokExtractor(),
       InstagramExtractor(),
-      GenericExtractor(),
+      GenericExtractor(useBrowserLoginSession: useBrowserLoginSession),
     ],
-    fallbacks: [BrowserCaptureExtractor()],
+    fallbacks: [BrowserCaptureExtractor(useBrowserLoginSession: useBrowserLoginSession)],
   );
 }

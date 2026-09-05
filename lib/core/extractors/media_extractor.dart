@@ -1,3 +1,4 @@
+import '../net/retry_policy.dart';
 import 'media_models.dart';
 
 /// Contract every platform-native extractor implements. `canHandle` must be
@@ -62,13 +63,45 @@ class ExtractorRegistry {
     'NETWORK',
   };
 
-  const ExtractorRegistry(this._extractors, {this.fallbacks = const []});
+  /// Backs off and retries a single extractor attempt once
+  /// (`RetryPolicy(maxAttempts: 2)`) when it fails `RATE_LIMITED`/`NETWORK`
+  /// - before this class decides whether to fall through to the next
+  /// technique at all (`docs/plan-phase4-cookies-resilience.md` section 3).
+  /// Deliberately just one retry, not the full 4-attempt policy default: a
+  /// platform extractor that keeps failing has a whole fall-through chain
+  /// (catch-all, then [fallbacks]) to try next, so exhausting 4 attempts
+  /// per technique here would compound into a very long wait before ever
+  /// reaching the technique (browser capture) that was actually measured
+  /// to get past a WAF escalation. `null` (the default via the constructor)
+  /// lazily uses [_defaultRetryPolicy] rather than being a `const`
+  /// constructor default itself, so `const ExtractorRegistry(...)` (used by
+  /// tests with no failure paths to retry) keeps working.
+  final RetryPolicy? _retryPolicy;
+
+  static final RetryPolicy _defaultRetryPolicy = RetryPolicy(maxAttempts: 2);
+
+  const ExtractorRegistry(this._extractors, {this.fallbacks = const [], RetryPolicy? retryPolicy})
+      : _retryPolicy = retryPolicy;
 
   MediaExtractor? find(Uri url) {
     for (final extractor in _extractors) {
       if (extractor.canHandle(url)) return extractor;
     }
     return null;
+  }
+
+  /// Runs a single [extractor]'s `extract(url)` through [_retryPolicy] (or
+  /// [_defaultRetryPolicy]): a `RATE_LIMITED`/`NETWORK` failure gets one
+  /// backed-off retry against the *same* extractor before either
+  /// [resolveInfo] or [_resolveAfterFailure] decides whether to fall
+  /// through to a different technique. Every other status (including the
+  /// other fall-through statuses, `CHALLENGE_FAILED`/`PARSE_ERROR`, and
+  /// every terminal status) is not retryable per `RetryPolicy`'s default
+  /// classification, so it is rethrown immediately, unchanged - identical
+  /// to calling `extractor.extract(url)` directly.
+  Future<MediaInfo> _attempt(MediaExtractor extractor, Uri url) {
+    final policy = _retryPolicy ?? _defaultRetryPolicy;
+    return policy.run(() => extractor.extract(url));
   }
 
   Future<MediaInfo> resolveInfo(Uri url) async {
@@ -81,7 +114,7 @@ class ExtractorRegistry {
     }
 
     try {
-      final info = _normalizeProtocols(await extractor.extract(url));
+      final info = _normalizeProtocols(await _attempt(extractor, url));
       if (info.formats.isEmpty) {
         // A successful extract with zero formats is not success: there is
         // nothing to download. Treated exactly like the catch-all
@@ -139,7 +172,7 @@ class ExtractorRegistry {
     var lastFailure = firstFailure;
     for (final attempt in remainingAttempts) {
       try {
-        final info = _normalizeProtocols(await attempt.extract(url));
+        final info = _normalizeProtocols(await _attempt(attempt, url));
         if (info.formats.isEmpty) {
           // Same rule as the top-level check in resolveInfo: an empty
           // format list is not success, even from a fallback - keep going

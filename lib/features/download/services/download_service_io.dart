@@ -7,6 +7,7 @@ import '../../../core/extractors/media_models.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/utils/url_parser.dart';
 import '../../../core/utils/file_utils.dart';
+import 'all_format_candidates_failed_exception.dart';
 import 'media_download_pipeline.dart';
 
 enum DownloadType { video, audio }
@@ -141,7 +142,13 @@ class DownloadTask {
 
 class DownloadService extends ChangeNotifier {
   final SettingsService _settings;
-  final ExtractorRegistry _registry;
+
+  /// Test-only fixed registry (the `registry` constructor param). When
+  /// null (production), [_registry] rebuilds from the current settings on
+  /// every call instead of freezing `useBrowserLoginSession` at
+  /// construction time, so flipping the Settings toggle takes effect on
+  /// the next fetch/download without needing an app restart.
+  final ExtractorRegistry? _fixedRegistry;
   final MediaDownloadPipeline _pipeline;
 
   DownloadTask? currentTask;
@@ -157,8 +164,11 @@ class DownloadService extends ChangeNotifier {
     this._settings, {
     ExtractorRegistry? registry,
     MediaDownloadPipeline? pipeline,
-  })  : _registry = registry ?? buildExtractorRegistry(),
+  })  : _fixedRegistry = registry,
         _pipeline = pipeline ?? MediaDownloadPipeline();
+
+  ExtractorRegistry get _registry =>
+      _fixedRegistry ?? buildExtractorRegistry(useBrowserLoginSession: _settings.useBrowserLoginSession);
 
   Future<Map<String, dynamic>?> fetchVideoInfo(String url) async {
     final uri = Uri.tryParse(url);
@@ -204,11 +214,17 @@ class DownloadService extends ChangeNotifier {
     // network round trip per download).
     Map<String, dynamic>? info;
     MediaInfo? mediaInfo;
+    // Kept (not just logged) so the `mediaInfo == null` branch below can
+    // surface *this* specific failure (its real status/reason, e.g.
+    // RATE_LIMITED) through `_describeDownloadError` instead of a generic
+    // "could not read this video" that throws away why.
+    Object? resolveError;
     if (uri != null) {
       try {
         mediaInfo = await _registry.resolveInfo(uri);
         info = _mediaInfoToMap(mediaInfo, url);
       } catch (e) {
+        resolveError = e;
         debugPrint('Error fetching video info: ${UrlParser.redactUrlsInText(e.toString())}');
       }
     }
@@ -227,7 +243,7 @@ class DownloadService extends ChangeNotifier {
 
     try {
       if (mediaInfo == null) {
-        throw Exception('Could not read this video. Check the URL and try again.');
+        throw resolveError ?? Exception('Could not read this video. Check the URL and try again.');
       }
       currentTask!.status = DownloadStatus.downloading;
       notifyListeners();
@@ -261,6 +277,18 @@ class DownloadService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Appended when the failure that reaches the user (directly, or as the
+  /// last format candidate's error inside [AllFormatCandidatesFailedException])
+  /// is a `RATE_LIMITED` [MediaExtractionException]: what happened (the
+  /// site is throttling this network), why a retry alone may not be enough
+  /// (some sources only serve the full result to a logged-in session), and
+  /// the concrete next step, naming the exact Settings toggle another lane
+  /// adds (`docs/plan-phase4-cookies-resilience.md` section 2).
+  static const _browserLoginSuggestion =
+      ' This can happen when a site is rate-limiting requests from this network. '
+      'Try turning on "Use browser login session" in Settings so MiDa can reuse your '
+      'signed-in browser session instead.';
+
   /// Renders any of our own exception types into the same
   /// what/why/next English shape, instead of showing a raw
   /// `Exception: ...`/stack-trace-flavored string to the user. Not
@@ -269,9 +297,15 @@ class DownloadService extends ChangeNotifier {
   /// `reason` is already a complete, source-specific sentence.
   String _describeDownloadError(Object e) {
     if (e is MediaExtractionException) {
-      return e.reason == null
+      final base = e.reason == null
           ? 'Could not fetch this video (status: ${e.status}). Check the URL and try again later.'
           : '${e.reason} Check the URL and try again later.';
+      return e.status == 'RATE_LIMITED' ? '$base$_browserLoginSuggestion' : base;
+    }
+    if (e is AllFormatCandidatesFailedException) {
+      final last = e.lastError;
+      final isRateLimited = last is MediaExtractionException && last.status == 'RATE_LIMITED';
+      return isRateLimited ? '$e$_browserLoginSuggestion' : e.toString();
     }
     if (e is NoDownloadableFormatsException) {
       return 'No downloadable formats were found for this video (it may be restricted or region-locked). '
