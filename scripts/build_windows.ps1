@@ -15,7 +15,7 @@ Write-Host "======================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Check if binaries exist
-if (-not (Test-Path (Join-Path $binariesDir "yt-dlp.exe"))) {
+if (-not (Test-Path (Join-Path $binariesDir "ffmpeg.exe"))) {
     Write-Host "Binaries not found. Running download script..." -ForegroundColor Yellow
     & (Join-Path $scriptDir "download_binaries.ps1")
 }
@@ -50,7 +50,6 @@ Copy-Item "$buildDir\*" $outputDir -Recurse
 
 # Copy binaries
 Write-Host "Copying binaries..." -ForegroundColor Yellow
-Copy-Item (Join-Path $binariesDir "yt-dlp.exe") $outputDir
 Copy-Item (Join-Path $binariesDir "ffmpeg.exe") $outputDir
 Copy-Item (Join-Path $binariesDir "ffprobe.exe") $outputDir
 

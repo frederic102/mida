@@ -1,8 +1,13 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
+import '../../../core/download/media_merger.dart';
+import '../../../core/download/stream_downloader.dart';
+import '../../../core/extractors/extractor_registry_builder.dart';
+import '../../../core/extractors/media_extractor.dart';
+import '../../../core/extractors/media_models.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/utils/url_parser.dart';
 import '../../../core/utils/file_utils.dart';
+import 'media_download_pipeline.dart';
 
 enum DownloadType { video, audio }
 
@@ -136,52 +141,77 @@ class DownloadTask {
 
 class DownloadService extends ChangeNotifier {
   final SettingsService _settings;
+  final ExtractorRegistry _registry;
+  final MediaDownloadPipeline _pipeline;
 
   DownloadTask? currentTask;
   List<DownloadTask> history = [];
 
-  DownloadService(this._settings);
+  /// Guards against a second `download()` call landing while one is
+  /// already running (e.g. a double-tap on the download button): without
+  /// this, the second call would overwrite `currentTask` out from under
+  /// the first, corrupting both downloads' progress/status reporting.
+  bool _isDownloading = false;
+
+  DownloadService(
+    this._settings, {
+    ExtractorRegistry? registry,
+    MediaDownloadPipeline? pipeline,
+  })  : _registry = registry ?? buildExtractorRegistry(),
+        _pipeline = pipeline ?? MediaDownloadPipeline();
 
   Future<Map<String, dynamic>?> fetchVideoInfo(String url) async {
-    final platform = UrlParser.detectPlatform(url);
-    return _fetchVideoInfoDesktop(url, platform);
-  }
-
-  Future<Map<String, dynamic>?> _fetchVideoInfoDesktop(
-      String url, PlatformType platform) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
     try {
-      final ytDlpPath = await _getYtDlpPath();
-      final result = await Process.run(
-        ytDlpPath,
-        ['--dump-json', '--no-playlist', url],
-        stdoutEncoding: const SystemEncoding(),
-        stderrEncoding: const SystemEncoding(),
-      );
-
-      if (result.exitCode != 0) {
-        throw Exception(result.stderr);
-      }
-
-      final json = result.stdout as String;
-      final data = _parseJson(json);
-      return {
-        'title': data['title'] ?? 'Unknown',
-        'thumbnail': data['thumbnail'],
-        'duration': data['duration'] != null
-            ? FileUtils.formatDuration(
-                Duration(seconds: (data['duration'] as num).toInt()))
-            : null,
-        'platform': platform,
-      };
+      return _mediaInfoToMap(await _registry.resolveInfo(uri), url);
     } catch (e) {
-      debugPrint('Error fetching video info: $e');
+      debugPrint('Error fetching video info: ${UrlParser.redactUrlsInText(e.toString())}');
       return null;
     }
   }
 
+  Map<String, dynamic> _mediaInfoToMap(MediaInfo info, String url) {
+    return {
+      'title': info.title,
+      'thumbnail': info.thumbnailUrl,
+      'duration': info.duration != null ? FileUtils.formatDuration(info.duration!) : null,
+      'platform': UrlParser.detectPlatform(url),
+    };
+  }
+
   Future<void> download(String url, DownloadType type, {DownloadOptions options = const DownloadOptions()}) async {
+    if (_isDownloading) {
+      currentTask?.statusMessage = 'A download is already in progress. Wait for it to finish and try again.';
+      notifyListeners();
+      return;
+    }
+    _isDownloading = true;
+    try {
+      await _runDownload(url, type, options);
+    } finally {
+      _isDownloading = false;
+    }
+  }
+
+  Future<void> _runDownload(String url, DownloadType type, DownloadOptions options) async {
     final platform = UrlParser.detectPlatform(url);
-    final info = await fetchVideoInfo(url);
+    final uri = Uri.tryParse(url);
+
+    // Fetch once and reuse: `mediaInfo` (formats included) is what actually
+    // drives the download below, so we must not throw it away and
+    // re-extract inside `_pipeline.download` (that would mean a second
+    // network round trip per download).
+    Map<String, dynamic>? info;
+    MediaInfo? mediaInfo;
+    if (uri != null) {
+      try {
+        mediaInfo = await _registry.resolveInfo(uri);
+        info = _mediaInfoToMap(mediaInfo, url);
+      } catch (e) {
+        debugPrint('Error fetching video info: ${UrlParser.redactUrlsInText(e.toString())}');
+      }
+    }
 
     currentTask = DownloadTask(
       url: url,
@@ -196,7 +226,27 @@ class DownloadService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _downloadDesktop(url, type, options);
+      if (mediaInfo == null) {
+        throw Exception('Could not read this video. Check the URL and try again.');
+      }
+      currentTask!.status = DownloadStatus.downloading;
+      notifyListeners();
+
+      final outputPath = await _pipeline.download(
+        info: mediaInfo,
+        type: type,
+        options: options,
+        outputDir: _settings.downloadPath,
+        onProgress: (progress) {
+          currentTask!.progress = progress;
+          notifyListeners();
+        },
+        onStatus: (message) {
+          currentTask!.statusMessage = message;
+          notifyListeners();
+        },
+      );
+      currentTask!.outputPath = outputPath;
 
       currentTask!.status = DownloadStatus.completed;
       history.insert(0, currentTask!);
@@ -205,163 +255,37 @@ class DownloadService extends ChangeNotifier {
       FileUtils.openFolder(_settings.downloadPath);
     } catch (e) {
       currentTask!.status = DownloadStatus.error;
-      currentTask!.error = e.toString();
+      currentTask!.error = _describeDownloadError(e);
     }
 
     notifyListeners();
   }
 
-  Future<void> _downloadDesktop(String url, DownloadType type, DownloadOptions options) async {
-    final ytDlpPath = await _getYtDlpPath();
-    final ffmpegPath = await _getFFmpegPath();
-    final outputDir = _settings.downloadPath;
-    final outputTemplate = '$outputDir/%(title)s.%(ext)s';
-
-    currentTask!.status = DownloadStatus.downloading;
-    notifyListeners();
-
-    final args = <String>[
-      '-o', outputTemplate,
-      '--no-playlist',
-      '--newline',
-      '--ffmpeg-location', ffmpegPath,
-    ];
-
-    // Subtitle download options (video only) - saves as separate .srt file
-    if (type == DownloadType.video && options.subtitleOption != SubtitleOption.none) {
-      args.addAll([
-        '--write-subs',
-        '--write-auto-subs',
-        '--sub-lang', options.subtitleOption.value,
-        '--convert-subs', 'srt',
-        '--ignore-errors',
-      ]);
+  /// Renders any of our own exception types into the same
+  /// what/why/next English shape, instead of showing a raw
+  /// `Exception: ...`/stack-trace-flavored string to the user. Not
+  /// YouTube-specific: every extractor (YouTube, X, Generic,
+  /// browser-capture) throws [MediaExtractionException], and each one's
+  /// `reason` is already a complete, source-specific sentence.
+  String _describeDownloadError(Object e) {
+    if (e is MediaExtractionException) {
+      return e.reason == null
+          ? 'Could not fetch this video (status: ${e.status}). Check the URL and try again later.'
+          : '${e.reason} Check the URL and try again later.';
     }
-
-    if (type == DownloadType.audio) {
-      args.addAll([
-        '-x',
-        '--audio-format', options.audioFormat.value,
-      ]);
-      if (options.audioQuality != AudioQuality.best) {
-        args.addAll(['--audio-quality', options.audioQuality.value]);
-      }
-    } else {
-      // Video format and quality settings
-      String formatStr;
-      if (options.videoQuality == VideoQuality.best) {
-        formatStr = 'bestvideo+bestaudio/best';
-      } else {
-        formatStr = 'bestvideo[height<=${options.videoQuality.value}]+bestaudio/best[height<=${options.videoQuality.value}]/best';
-      }
-      args.addAll(['-f', formatStr]);
-
-      // Final container format (ffmpeg handles conversion)
-      args.addAll(['--merge-output-format', options.videoFormat.value]);
+    if (e is NoDownloadableFormatsException) {
+      return 'No downloadable formats were found for this video (it may be restricted or region-locked). '
+          'Check the URL and try again later.';
     }
-
-    args.add(url);
-
-    debugPrint('yt-dlp args: $args');
-    final process = await Process.start(ytDlpPath, args);
-
-    final stderrBuffer = StringBuffer();
-
-    process.stdout.transform(const SystemEncoding().decoder).listen((line) {
-      debugPrint('yt-dlp stdout: $line');
-      final progress = _parseProgress(line);
-      if (progress != null) {
-        currentTask!.progress = progress;
-        notifyListeners();
-      }
-    });
-
-    process.stderr.transform(const SystemEncoding().decoder).listen((line) {
-      debugPrint('yt-dlp stderr: $line');
-      stderrBuffer.writeln(line);
-    });
-
-    final exitCode = await process.exitCode;
-    if (exitCode != 0) {
-      final errorMsg = stderrBuffer.toString().trim();
-      throw Exception(errorMsg.isNotEmpty ? errorMsg : 'Download failed with exit code $exitCode');
+    if (e is StreamDownloadException) {
+      return 'The download failed while fetching video or audio data: ${e.message} '
+          'Check your internet connection and try again.';
     }
-
-    currentTask!.progress = 1.0;
-  }
-
-  Future<String> _getYtDlpPath() async {
-    if (Platform.isWindows) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.path;
-      final ytDlpPath = '$appDir/yt-dlp.exe';
-
-      if (await File(ytDlpPath).exists()) {
-        return ytDlpPath;
-      }
-      return 'yt-dlp';
-    } else if (Platform.isMacOS) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.parent.path;
-      final ytDlpPath = '$appDir/Resources/yt-dlp';
-
-      if (await File(ytDlpPath).exists()) {
-        return ytDlpPath;
-      }
-      return 'yt-dlp';
+    if (e is MediaMergeException) {
+      return 'Converting or merging the downloaded file failed: ${e.message} '
+          'Make sure ffmpeg is installed correctly and try again.';
     }
-    return 'yt-dlp';
-  }
-
-  Future<String> _getFFmpegPath() async {
-    if (Platform.isWindows) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.path;
-      final ffmpegPath = '$appDir/ffmpeg.exe';
-
-      if (await File(ffmpegPath).exists()) {
-        return appDir;
-      }
-      return '';
-    } else if (Platform.isMacOS) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.parent.path;
-      final ffmpegPath = '$appDir/Resources/ffmpeg';
-
-      if (await File(ffmpegPath).exists()) {
-        return '$appDir/Resources';
-      }
-      return '';
-    }
-    return '';
-  }
-
-  double? _parseProgress(String line) {
-    final match = RegExp(r'\[download\]\s+(\d+\.?\d*)%').firstMatch(line);
-    if (match != null) {
-      final percent = double.tryParse(match.group(1)!);
-      if (percent != null) {
-        return percent / 100;
-      }
-    }
-    return null;
-  }
-
-  Map<String, dynamic> _parseJson(String json) {
-    final Map<String, dynamic> result = {};
-    final titleMatch = RegExp(r'"title"\s*:\s*"([^"]*)"').firstMatch(json);
-    final thumbnailMatch =
-        RegExp(r'"thumbnail"\s*:\s*"([^"]*)"').firstMatch(json);
-    final durationMatch =
-        RegExp(r'"duration"\s*:\s*(\d+\.?\d*)').firstMatch(json);
-
-    if (titleMatch != null) result['title'] = titleMatch.group(1);
-    if (thumbnailMatch != null) result['thumbnail'] = thumbnailMatch.group(1);
-    if (durationMatch != null) {
-      result['duration'] = double.tryParse(durationMatch.group(1)!);
-    }
-
-    return result;
+    return e.toString();
   }
 
   void clearCurrentTask() {

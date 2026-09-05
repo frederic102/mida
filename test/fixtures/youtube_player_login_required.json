@@ -1,0 +1,23 @@
+{
+  "playabilityStatus": {
+    "status": "LOGIN_REQUIRED",
+    "reason": "Sign in to confirm you’re not a bot",
+    "errorScreen": {
+      "playerErrorMessageRenderer": {
+        "subreason": {
+          "runs": [
+            {
+              "text": "This helps protect our community. Learn more"
+            }
+          ]
+        },
+        "reason": {
+          "simpleText": "Sign in to confirm you’re not a bot"
+        }
+      }
+    }
+  },
+  "videoDetails": {
+    "videoId": "dQw4w9WgXcQ"
+  }
+}

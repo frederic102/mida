@@ -12,13 +12,13 @@ void main() async {
   final settingsService = SettingsService();
   await settingsService.init();
 
+  final downloadService = DownloadService(settingsService);
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: settingsService),
-        ChangeNotifierProvider(
-          create: (_) => DownloadService(settingsService),
-        ),
+        ChangeNotifierProvider.value(value: downloadService),
         ChangeNotifierProvider(
           create: (_) => CompressService(settingsService),
         ),

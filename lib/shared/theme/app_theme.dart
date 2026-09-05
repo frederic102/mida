@@ -73,7 +73,7 @@ class AppTheme {
       ),
       iconTheme: const IconThemeData(color: textSecondary, size: 22),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: cardColor,
       elevation: 0,
       margin: EdgeInsets.zero,

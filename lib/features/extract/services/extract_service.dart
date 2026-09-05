@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../../../core/services/settings_service.dart';
 import '../../../core/services/platform_service.dart';
+import '../../../core/services/ffmpeg_locator.dart';
 import '../../../core/utils/file_utils.dart';
 
 enum ExtractStatus { idle, analyzing, extracting, completed, error, unsupported }
@@ -123,51 +124,9 @@ class ExtractService extends ChangeNotifier {
     currentTask!.progress = 1.0;
   }
 
-  Future<String> _getFFmpegPath() async {
-    if (Platform.isWindows) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.path;
-      final ffmpegPath = '$appDir/ffmpeg.exe';
+  Future<String> _getFFmpegPath() => FfmpegLocator.ffmpegPath();
 
-      if (await File(ffmpegPath).exists()) {
-        return ffmpegPath;
-      }
-      return 'ffmpeg';
-    } else if (Platform.isMacOS) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.parent.path;
-      final ffmpegPath = '$appDir/Resources/ffmpeg';
-
-      if (await File(ffmpegPath).exists()) {
-        return ffmpegPath;
-      }
-      return 'ffmpeg';
-    }
-    return 'ffmpeg';
-  }
-
-  Future<String> _getFFprobePath() async {
-    if (Platform.isWindows) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.path;
-      final ffprobePath = '$appDir/ffprobe.exe';
-
-      if (await File(ffprobePath).exists()) {
-        return ffprobePath;
-      }
-      return 'ffprobe';
-    } else if (Platform.isMacOS) {
-      final exePath = Platform.resolvedExecutable;
-      final appDir = File(exePath).parent.parent.path;
-      final ffprobePath = '$appDir/Resources/ffprobe';
-
-      if (await File(ffprobePath).exists()) {
-        return ffprobePath;
-      }
-      return 'ffprobe';
-    }
-    return 'ffprobe';
-  }
+  Future<String> _getFFprobePath() => FfmpegLocator.ffprobePath();
 
   double? _parseFFmpegProgress(String line, double totalDuration) {
     final match = RegExp(r'time=(\d+):(\d+):(\d+\.?\d*)').firstMatch(line);

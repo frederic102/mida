@@ -1,0 +1,19 @@
+{
+  "playabilityStatus": {
+    "status": "UNPLAYABLE",
+    "reason": "This video is not available",
+    "errorScreen": {
+      "playerErrorMessageRenderer": {
+        "reason": {
+          "simpleText": "This video is not available"
+        },
+        "subreason": {
+          "simpleText": "The uploader has not made this video available in your country"
+        }
+      }
+    }
+  },
+  "videoDetails": {
+    "videoId": "dQw4w9WgXcQ"
+  }
+}

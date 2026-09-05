@@ -17,23 +17,8 @@ mkdir -p "$BINARIES_DIR"
 ARCH=$(uname -m)
 if [ "$ARCH" = "arm64" ]; then
     FFMPEG_ARCH="arm64"
-    YTDLP_ARCH="macos"
 else
     FFMPEG_ARCH="x86_64"
-    YTDLP_ARCH="macos_legacy"
-fi
-
-# Download yt-dlp
-YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_${YTDLP_ARCH}"
-YTDLP_PATH="$BINARIES_DIR/yt-dlp"
-
-if [ ! -f "$YTDLP_PATH" ]; then
-    echo "Downloading yt-dlp..."
-    curl -L "$YTDLP_URL" -o "$YTDLP_PATH"
-    chmod +x "$YTDLP_PATH"
-    echo "yt-dlp downloaded successfully!"
-else
-    echo "yt-dlp already exists, skipping..."
 fi
 
 # Download FFmpeg (using evermeet.cx for macOS builds)

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>JSON-LD Array Demo</title>
+  <script type="application/ld+json">
+  [
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "name": "Wrapper page, not the video itself"
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "VideoObject",
+      "name": "Array Item Video",
+      "contentUrl": "https://cdn.example.com/videos/array-item.mp4",
+      "embedUrl": "https://cdn.example.com/embed/array-item"
+    }
+  ]
+  </script>
+</head>
+<body>
+  <p>Metadata lives only in JSON-LD for this fixture.</p>
+</body>
+</html>

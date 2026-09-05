@@ -16,7 +16,7 @@ echo "======================================"
 echo ""
 
 # Check if binaries exist
-if [ ! -f "$BINARIES_DIR/yt-dlp" ]; then
+if [ ! -f "$BINARIES_DIR/ffmpeg" ]; then
     echo "Binaries not found. Running download script..."
     bash "$SCRIPT_DIR/download_binaries_mac.sh"
 fi
@@ -50,12 +50,10 @@ cp -R "$BUILD_DIR/mida.app" "$OUTPUT_DIR/MiDa.app"
 # Copy binaries to app bundle Resources
 RESOURCES_DIR="$OUTPUT_DIR/MiDa.app/Contents/Resources"
 echo "Copying binaries to app bundle..."
-cp "$BINARIES_DIR/yt-dlp" "$RESOURCES_DIR/"
 cp "$BINARIES_DIR/ffmpeg" "$RESOURCES_DIR/"
 cp "$BINARIES_DIR/ffprobe" "$RESOURCES_DIR/"
 
 # Make binaries executable
-chmod +x "$RESOURCES_DIR/yt-dlp"
 chmod +x "$RESOURCES_DIR/ffmpeg"
 chmod +x "$RESOURCES_DIR/ffprobe"
 

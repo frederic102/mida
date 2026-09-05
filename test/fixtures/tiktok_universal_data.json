@@ -1,0 +1,57 @@
+{
+  "__DEFAULT_SCOPE__": {
+    "webapp.video-detail": {
+      "statusCode": 0,
+      "itemInfo": {
+        "itemStruct": {
+          "id": "7047596209028074758",
+          "desc": "",
+          "author": {
+            "uniqueId": "hankgreen1",
+            "nickname": "Hank Green"
+          },
+          "music": {
+            "id": "7047596473303075590",
+            "title": "original sound",
+            "authorName": "Hank Green",
+            "original": true
+          },
+          "video": {
+            "duration": 21,
+            "cover": "https://p16-common-sign.tiktokcdn.com/tos-maliva-p-0068/6ee7936c40364b598037278af03f7e69_1640896364~tplv-tiktokx-origin.image?dr=14575&x-expires=1788746400&x-signature=Ih6MtJEWFPhAyS0XBbZg5Wg6jDo%3D&t=4d5b0474&ps=13740610&shp=81f88b70&shcp=43f4a2f9&idc=my2",
+            "bitrateInfo": [
+              {
+                "Bitrate": 1895168,
+                "CodecType": "h264",
+                "PlayAddr": {
+                  "UrlList": [
+                    "https://v16-webapp-prime.tiktok.com/video/tos/alisg/tos-alisg-ve-37c799-sg/bc5bc41709464e88b29079bf4b17ab84/?a=1988&bti=ODszNWYuMDE6&&bt=1850&ft=-Csk_mfMPD12NMHb7n-Uxlv5VY6e3wv25rcAp&mime_type=video_mp4&rc=aDo2NzY3O2Q0O2U0ZGlmNkBpajtqNWg6Zjs0OjMzNzczM0BhXjBgM2NiNWIxYTQxYV9iYSNiMWwycjRfYDRgLS1kMTZzcw%3D%3D&expire=1788747946&l=20260905102523A2EED099E0E88F0371C1&ply_type=2&policy=2&signature=c14414d633d283617b64762ce6afe560&tk=tt_chain_token&btag=e000b8000",
+                    "https://v19-webapp-prime.tiktok.com/video/tos/alisg/tos-alisg-ve-37c799-sg/bc5bc41709464e88b29079bf4b17ab84/?a=1988&bti=ODszNWYuMDE6&&bt=1850&ft=-Csk_mfMPD12NMHb7n-Uxlv5VY6e3wv25rcAp&mime_type=video_mp4&rc=aDo2NzY3O2Q0O2U0ZGlmNkBpajtqNWg6Zjs0OjMzNzczM0BhXjBgM2NiNWIxYTQxYV9iYSNiMWwycjRfYDRgLS1kMTZzcw%3D%3D&expire=1788747946&l=20260905102523A2EED099E0E88F0371C1&ply_type=2&policy=2&signature=c14414d633d283617b64762ce6afe560&tk=tt_chain_token&btag=e000b8000"
+                  ],
+                  "Width": 576,
+                  "Height": 1024,
+                  "UrlKey": "v09044g40000c771c8bc77ue52og48eg_h264_540p_1895168",
+                  "DataSize": "5076682"
+                }
+              },
+              {
+                "Bitrate": 1108496,
+                "CodecType": "h264",
+                "PlayAddr": {
+                  "UrlList": [
+                    "https://v16-webapp-prime.tiktok.com/video/tos/alisg/tos-alisg-ve-37c799-sg/909587fde428487f87110fee73bd4a12/?a=1988&bti=ODszNWYuMDE6&&bt=1082&ft=-Csk_mfMPD12NMHb7n-Uxlv5VY6e3wv25rcAp&mime_type=video_mp4&rc=ZzVpPGRoOTs5aWgzPDw0OEBpajtqNWg6Zjs0OjMzNzczM0BhYS8wMy0tXjAxNi01LmMxYSNiMWwycjRfYDRgLS1kMTZzcw%3D%3D&expire=1788747946&l=20260905102523A2EED099E0E88F0371C1&ply_type=2&policy=2&signature=0a845d5ce30f14be7517160926614498&tk=tt_chain_token&btag=e000b8000",
+                    "https://v19-webapp-prime.tiktok.com/video/tos/alisg/tos-alisg-ve-37c799-sg/909587fde428487f87110fee73bd4a12/?a=1988&bti=ODszNWYuMDE6&&bt=1082&ft=-Csk_mfMPD12NMHb7n-Uxlv5VY6e3wv25rcAp&mime_type=video_mp4&rc=ZzVpPGRoOTs5aWgzPDw0OEBpajtqNWg6Zjs0OjMzNzczM0BhYS8wMy0tXjAxNi01LmMxYSNiMWwycjRfYDRgLS1kMTZzcw%3D%3D&expire=1788747946&l=20260905102523A2EED099E0E88F0371C1&ply_type=2&policy=2&signature=0a845d5ce30f14be7517160926614498&tk=tt_chain_token&btag=e000b8000"
+                  ],
+                  "Width": 576,
+                  "Height": 1024,
+                  "UrlKey": "v09044g40000c771c8bc77ue52og48eg_h264_540p_1108496",
+                  "DataSize": "2969386"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@
 <h1 align="center">MiDa</h1>
 
 <p align="center">
-  Desktop media downloader & encoder powered by yt-dlp and FFmpeg.
+  Desktop media downloader & encoder with native extractors and FFmpeg.
 </p>
 
 <p align="center">
@@ -38,7 +38,7 @@ Go to [**Releases**](https://github.com/frederic102/mida/releases/latest) and do
 | Windows | `MiDa_Setup_v*.exe` | Windows 10+ |
 | macOS | `MiDa.dmg` | macOS 11+ |
 
-Bundled dependencies (yt-dlp, FFmpeg) are included in the installer. No additional setup required.
+FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok and Instagram natively. Other sites are handled by generic page analysis and, when needed, a headless copy of your installed Microsoft Edge or Google Chrome. DRM-protected and login-only content is not supported. Set `MIDA_BROWSER_PATH` to override the detected browser location.
 
 ## Building from Source
 
@@ -55,7 +55,7 @@ Bundled dependencies (yt-dlp, FFmpeg) are included in the installer. No addition
 git clone https://github.com/frederic102/mida.git
 cd mida
 
-# Download yt-dlp and FFmpeg (first time only)
+# Download FFmpeg (first time only)
 # Windows:
 .\scripts\download_binaries.ps1
 # macOS:
@@ -80,7 +80,8 @@ flutter run -d windows   # or: flutter run -d macos
 | Component | Role |
 |-----------|------|
 | [Flutter](https://flutter.dev) | Cross-platform desktop UI |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Video/audio download engine |
+| Native extractors | YouTube, X (Twitter), TikTok, Instagram, generic page analysis |
+| Microsoft Edge / Google Chrome (headless, user-installed) | Fallback capture for sites the generic analysis cannot parse |
 | [FFmpeg](https://ffmpeg.org) | Media encoding and processing |
 
 ## Contributing
@@ -95,4 +96,4 @@ This software is provided for personal use. Users are responsible for ensuring c
 
 [GPLv3](LICENSE)
 
-Third-party: [FFmpeg](https://ffmpeg.org/legal.html) (GPL v2+), [yt-dlp](https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE) (Unlicense)
+Third-party: [FFmpeg](https://ffmpeg.org/legal.html) (GPL v2+)

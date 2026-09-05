@@ -14,18 +14,6 @@ if (-not (Test-Path $binariesDir)) {
     New-Item -ItemType Directory -Path $binariesDir | Out-Null
 }
 
-# Download yt-dlp
-$ytdlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-$ytdlpPath = Join-Path $binariesDir "yt-dlp.exe"
-
-if (-not (Test-Path $ytdlpPath)) {
-    Write-Host "Downloading yt-dlp..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri $ytdlpUrl -OutFile $ytdlpPath
-    Write-Host "yt-dlp downloaded successfully!" -ForegroundColor Green
-} else {
-    Write-Host "yt-dlp already exists, skipping..." -ForegroundColor Gray
-}
-
 # Download FFmpeg
 $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 $ffmpegZip = Join-Path $binariesDir "ffmpeg.zip"

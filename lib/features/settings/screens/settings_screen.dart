@@ -179,7 +179,7 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               title: const Text('MiDa'),
-              subtitle: const Text('Version 1.2.1'),
+              subtitle: const Text('Version 2.0.0'),
             ),
             const Divider(),
             ListTile(
