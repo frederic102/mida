@@ -187,6 +187,16 @@ class HostPolicy {
   /// [resolveHost] defaults to the real `InternetAddress.lookup`; tests
   /// inject a fake to prove the DNS-rebinding guard above without making
   /// a real DNS query.
+  ///
+  /// [onHop] (phase 6 round 4, lead contract) is invoked with the exact
+  /// URI about to be requested on hop 0 and on every redirect hop that is
+  /// followed, in order. The last value it receives is the effective URI
+  /// the returned [HttpClientResponse] actually came from - the base a
+  /// caller must resolve relative references in that body against, and
+  /// the host a caller must include in any credential-scope decision
+  /// (`ManifestReferenceScanner`). Without it a caller only ever sees the
+  /// pre-redirect [url], so a manifest that redirected elsewhere was being
+  /// parsed against, and cookie-scoped for, the wrong origin.
   static Future<HttpClientResponse> guardedRequest(
     HttpClient client,
     Uri url, {
@@ -194,11 +204,13 @@ class HostPolicy {
     void Function(HttpClientRequest request)? configureRequest,
     bool allowPrivateHosts = false,
     Future<List<InternetAddress>> Function(String host) resolveHost = InternetAddress.lookup,
+    void Function(Uri hop)? onHop,
   }) async {
     var currentUrl = url;
     HttpClientResponse? response;
 
     for (var hop = 0; hop <= maxRedirectHops; hop++) {
+      onHop?.call(currentUrl);
       final hopIsExempt = allowPrivateHosts && hop == 0;
       if (!hopIsExempt) {
         if (isDisallowedHost(currentUrl)) {

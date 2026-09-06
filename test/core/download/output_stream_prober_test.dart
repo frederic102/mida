@@ -63,4 +63,46 @@ void main() {
 
     expect(types, isNull);
   });
+
+  group('OutputStreamProber.duration (phase 6 round 2, S-R7)', () {
+    test('a zero exit with a parseable seconds value reports it as a Duration', () async {
+      final scriptPath = '${tempDir.path}/fake_ffprobe_duration.bat';
+      await File(scriptPath).writeAsString('@echo off\r\necho 125.480000\r\nexit /b 0\r\n');
+      final prober = OutputStreamProber(ffprobePathResolver: () async => scriptPath);
+
+      final duration = await prober.duration('${tempDir.path}/whatever.mp4');
+
+      expect(duration, const Duration(milliseconds: 125480));
+    });
+
+    test('a non-zero exit stays null rather than trusting whatever partial text was printed', () async {
+      final scriptPath = '${tempDir.path}/fake_ffprobe_duration_fail.bat';
+      await File(scriptPath).writeAsString('@echo off\r\necho N/A\r\nexit /b 1\r\n');
+      final prober = OutputStreamProber(ffprobePathResolver: () async => scriptPath);
+
+      final duration = await prober.duration('${tempDir.path}/whatever.mp4');
+
+      expect(duration, isNull);
+    });
+
+    test('unparseable output stays null rather than throwing', () async {
+      final scriptPath = '${tempDir.path}/fake_ffprobe_duration_garbage.bat';
+      await File(scriptPath).writeAsString('@echo off\r\necho N/A\r\nexit /b 0\r\n');
+      final prober = OutputStreamProber(ffprobePathResolver: () async => scriptPath);
+
+      final duration = await prober.duration('${tempDir.path}/whatever.mp4');
+
+      expect(duration, isNull);
+    });
+
+    test('ffprobe itself could not even be started stays null', () async {
+      final prober = OutputStreamProber(
+        ffprobePathResolver: () async => '${tempDir.path}/this_binary_does_not_exist.exe',
+      );
+
+      final duration = await prober.duration('${tempDir.path}/whatever.mp4');
+
+      expect(duration, isNull);
+    });
+  });
 }

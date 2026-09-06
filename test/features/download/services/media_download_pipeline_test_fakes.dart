@@ -18,16 +18,32 @@ import 'package:mida/core/extractors/media_models.dart';
 class RecordingHlsDownloader extends HlsFfmpegDownloader {
   final List<String> urlsRequested = [];
   final List<Duration?> totalDurationsRequested = [];
+  final List<Duration?> processTimeoutsRequested = [];
   final List<List<String>> builtArgs = [];
   bool shouldThrow = false;
+
+  /// What this fake returns from [downloadVerified] as the manifest's own
+  /// DECLARED duration (round 3 lead contract / P-R3-5). Null - "the
+  /// manifest said nothing" - unless a test sets it, which is what the
+  /// real downloader returns for anything but an `#EXTINF`-carrying HLS
+  /// media playlist or an MPD with `mediaPresentationDuration`.
+  Duration? declaredDuration;
 
   /// Overridden so the real `downloadVerified` (which would otherwise
   /// fetch [url] as a real manifest before ever reaching the overridden
   /// `buildArgs`/`run` below) never actually hits the network: these
   /// tests use fake `https://example.invalid/...` URLs precisely so nothing
   /// here does real I/O.
+  ///
+  /// [processTimeout] must be declared here to stay a valid override of
+  /// `HlsFfmpegDownloader.downloadVerified` (round 2 P-R5 contract) - it is
+  /// forwarded to [run] below, and [processTimeoutsRequested] records it so
+  /// a test can assert what `AdaptivePairDownloader`/`SingleFormatDownloader`
+  /// actually computed and passed. The `Duration?` return is round 3's lead
+  /// contract (Lane B, B-R3-7): [declaredDuration], so a test can drive the
+  /// pipeline's `expectedDuration` fallback without a real manifest.
   @override
-  Future<void> downloadVerified({
+  Future<Duration?> downloadVerified({
     required String url,
     required String outputPath,
     Map<String, String> headers = const {},
@@ -35,7 +51,11 @@ class RecordingHlsDownloader extends HlsFfmpegDownloader {
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    void Function(String message)? onStatus,
     Map<String, List<CookieEntry>>? cookiesByDomain,
+    String? sourceAudioCodec,
+    bool? segmentsAreTransportStream,
+    Duration? processTimeout,
   }) async {
     final args = buildArgs(
       url: url,
@@ -43,8 +63,12 @@ class RecordingHlsDownloader extends HlsFfmpegDownloader {
       headers: headers,
       audioOnly: audioOnly,
       audioCodecArgs: audioCodecArgs,
+      sourceAudioCodec: sourceAudioCodec,
+      segmentsAreTransportStream: segmentsAreTransportStream,
     );
-    await run(args, totalDuration: totalDuration, onProgress: onProgress);
+    processTimeoutsRequested.add(processTimeout);
+    await run(args, totalDuration: totalDuration, onProgress: onProgress, processTimeout: processTimeout);
+    return declaredDuration;
   }
 
   @override
@@ -67,6 +91,8 @@ class RecordingHlsDownloader extends HlsFfmpegDownloader {
     Map<String, String> headers = const {},
     bool audioOnly = false,
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
+    String? sourceAudioCodec,
+    bool? segmentsAreTransportStream,
   }) {
     urlsRequested.add(url);
     final args = super.buildArgs(
@@ -75,6 +101,8 @@ class RecordingHlsDownloader extends HlsFfmpegDownloader {
       headers: headers,
       audioOnly: audioOnly,
       audioCodecArgs: audioCodecArgs,
+      sourceAudioCodec: sourceAudioCodec,
+      segmentsAreTransportStream: segmentsAreTransportStream,
     );
     builtArgs.add(args);
     return args;
@@ -92,9 +120,11 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
 
   /// Same reasoning as `RecordingHlsDownloader.downloadVerified`: skip the
   /// real manifest fetch/host-check entirely and go straight to this
-  /// fake's own (delegating) `buildArgs`/`run`.
+  /// fake's own (delegating) `buildArgs`/`run`. Returns null: this fake
+  /// exists to decide which call FAILS, and no test needs a declared
+  /// duration out of it.
   @override
-  Future<void> downloadVerified({
+  Future<Duration?> downloadVerified({
     required String url,
     required String outputPath,
     Map<String, String> headers = const {},
@@ -102,7 +132,11 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
     Duration? totalDuration,
     void Function(double progress)? onProgress,
+    void Function(String message)? onStatus,
     Map<String, List<CookieEntry>>? cookiesByDomain,
+    String? sourceAudioCodec,
+    bool? segmentsAreTransportStream,
+    Duration? processTimeout,
   }) async {
     final args = buildArgs(
       url: url,
@@ -110,8 +144,11 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
       headers: headers,
       audioOnly: audioOnly,
       audioCodecArgs: audioCodecArgs,
+      sourceAudioCodec: sourceAudioCodec,
+      segmentsAreTransportStream: segmentsAreTransportStream,
     );
-    await run(args, totalDuration: totalDuration, onProgress: onProgress);
+    await run(args, totalDuration: totalDuration, onProgress: onProgress, processTimeout: processTimeout);
+    return null;
   }
 
   @override
@@ -121,6 +158,8 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
     Map<String, String> headers = const {},
     bool audioOnly = false,
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
+    String? sourceAudioCodec,
+    bool? segmentsAreTransportStream,
   }) {
     return inner.buildArgs(
       url: url,
@@ -128,6 +167,8 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
       headers: headers,
       audioOnly: audioOnly,
       audioCodecArgs: audioCodecArgs,
+      sourceAudioCodec: sourceAudioCodec,
+      segmentsAreTransportStream: segmentsAreTransportStream,
     );
   }
 
@@ -141,7 +182,7 @@ class CountingHlsDownloader extends HlsFfmpegDownloader {
     if (shouldFailThisCall()) {
       throw const MediaMergeException('simulated failure on this candidate');
     }
-    await inner.run(args, totalDuration: totalDuration, onProgress: onProgress);
+    await inner.run(args, totalDuration: totalDuration, onProgress: onProgress, processTimeout: processTimeout);
   }
 }
 

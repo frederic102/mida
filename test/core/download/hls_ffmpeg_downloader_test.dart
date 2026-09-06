@@ -108,6 +108,64 @@ void main() {
         expect(args, containsAllInOrder(['-headers', 'Cookie: a=bc\r\n']));
       });
 
+      // Phase 6 B-R5: a header field NAME must match the RFC 7230 token
+      // grammar or be refused. It is never repaired by stripping
+      // characters out of it - a stripped name silently becomes a
+      // different header than the source asked for.
+      final invalidNames = {
+        'a space': 'X-Bad Header',
+        'a colon (splits the field)': 'X-Bad:Header',
+        'a NUL control character': 'X-Bad\x00Header',
+        'a CR': 'X-Bad\rHeader',
+        'an LF': 'X-Bad\nHeader',
+        'a double quote': 'X-Bad"Header',
+        'a comma': 'X-Bad,Header',
+        'a non-ASCII letter': 'X-BadéHeader',
+        'nothing at all (empty)': '',
+      };
+      for (final entry in invalidNames.entries) {
+        test('guard can fail: a header name containing ${entry.key} is rejected, not stripped', () {
+          expect(
+            () => downloader.buildArgs(
+              url: 'https://example.invalid/x.m3u8',
+              outputPath: 'out.mp4',
+              headers: {entry.value: 'v'},
+            ),
+            throwsA(isA<HeaderInjectionException>().having(
+              (e) => e.message,
+              'message',
+              contains('RFC 7230'),
+            )),
+          );
+        });
+      }
+      // Guard can fail (see report): restoring the pre-phase-6
+      // `_sanitizeHeader('header name', e.key)` (strip control chars,
+      // accept everything else) made the NUL/space/colon/comma/quote/
+      // non-ASCII/empty cases above fail - buildArgs happily emitted
+      // `X-BadHeader: v`, `X-Bad Header: v`, `X-Bad:Header: v` and even
+      // `: v` instead of refusing.
+
+      test('every tchar is accepted in a header name and passed through byte for byte', () {
+        final args = downloader.buildArgs(
+          url: 'https://example.invalid/x.m3u8',
+          outputPath: 'out.mp4',
+          headers: const {"X-Odd!#\$%&'*+-.^_`|~09aZ": 'v'},
+        );
+        expect(args, containsAllInOrder(['-headers', "X-Odd!#\$%&'*+-.^_`|~09aZ: v\r\n"]));
+      });
+
+      test('a bad name anywhere in the map fails the whole call (no partially-built header blob)', () {
+        expect(
+          () => downloader.buildArgs(
+            url: 'https://example.invalid/x.m3u8',
+            outputPath: 'out.mp4',
+            headers: const {'Referer': 'https://example.invalid/', 'X Bad': 'v'},
+          ),
+          throwsA(isA<HeaderInjectionException>()),
+        );
+      });
+
       test('a clean header value is unaffected', () {
         final args = downloader.buildArgs(
           url: 'https://example.invalid/x.m3u8',
@@ -137,6 +195,71 @@ void main() {
       test('omitted for an output path with no extension at all', () {
         final args = downloader.buildArgs(url: 'https://example.invalid/x.m3u8', outputPath: 'out_no_ext');
         expect(args, isNot(contains('-bsf:a')));
+      });
+    });
+
+    group('-bsf:a aac_adtstoasc is also conditional on sourceAudioCodec/segmentsAreTransportStream '
+        '(phase 6 trap 2: the bsf assumes ADTS-framed AAC, and neither non-AAC audio nor fMP4-framed audio is that)',
+        () {
+      for (final codec in ['ec-3', 'ac-3', 'opus', 'vorbis', 'flac', 'alac', 'EC-3.JOC']) {
+        test('omitted when sourceAudioCodec is definitely non-AAC ($codec)', () {
+          final args = downloader.buildArgs(
+            url: 'https://example.invalid/x.m3u8',
+            outputPath: 'out.mp4',
+            sourceAudioCodec: codec,
+          );
+          expect(args, containsAllInOrder(['-c', 'copy']));
+          expect(args, isNot(contains('-bsf:a')));
+        });
+      }
+
+      test('omitted when segmentsAreTransportStream is explicitly false (fMP4/CMAF audio, even with an AAC codec)',
+          () {
+        final args = downloader.buildArgs(
+          url: 'https://example.invalid/x.m3u8',
+          outputPath: 'out.mp4',
+          sourceAudioCodec: 'mp4a.40.2',
+          segmentsAreTransportStream: false,
+        );
+        expect(args, isNot(contains('-bsf:a')));
+      });
+
+      test('applied when sourceAudioCodec is AAC (mp4a) and segmentsAreTransportStream is unspecified '
+          '(the common/legacy .ts-segmented HLS shape this bsf exists for)', () {
+        final args = downloader.buildArgs(
+          url: 'https://example.invalid/x.m3u8',
+          outputPath: 'out.mp4',
+          sourceAudioCodec: 'mp4a.40.2',
+        );
+        expect(args, containsAllInOrder(['-c', 'copy', '-bsf:a', 'aac_adtstoasc']));
+      });
+
+      test('applied when sourceAudioCodec is null (unknown) and segmentsAreTransportStream is unspecified - '
+          'preserves this method\'s pre-phase-6 default for every existing caller that never passes these',
+          () {
+        final args = downloader.buildArgs(url: 'https://example.invalid/x.m3u8', outputPath: 'out.mp4');
+        expect(args, containsAllInOrder(['-c', 'copy', '-bsf:a', 'aac_adtstoasc']));
+      });
+
+      test('applied when segmentsAreTransportStream is explicitly true, even with a null codec', () {
+        final args = downloader.buildArgs(
+          url: 'https://example.invalid/x.m3u8',
+          outputPath: 'out.mp4',
+          segmentsAreTransportStream: true,
+        );
+        expect(args, containsAllInOrder(['-c', 'copy', '-bsf:a', 'aac_adtstoasc']));
+      });
+
+      test('never applied for audioOnly (the -vn branch), regardless of sourceAudioCodec', () {
+        final args = downloader.buildArgs(
+          url: 'https://example.invalid/x.m3u8',
+          outputPath: 'out.m4a',
+          audioOnly: true,
+          audioCodecArgs: const ['-c:a', 'copy'],
+          sourceAudioCodec: 'mp4a.40.2',
+        );
+        expect(args, isNot(contains('-bsf:a')));
+        expect(args, containsAllInOrder(['-vn', '-c:a', 'copy']));
       });
     });
   });

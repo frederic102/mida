@@ -111,5 +111,37 @@ fingerprint or geo block), vk-video and ok-ru (CDN certificate not trusted by th
 niconico, pinterest, ted, facebook, vimeo (captured candidates are DASH/CMAF renditions whose
 init or audio pairing the pipeline could not complete; open follow-up).
 
+### Phase 6 interim (2026-09-06, five-site re-run after the A/V pairing fix, uncommitted tree)
+
+Re-run of exactly those five with `MIDA_SITES=vimeo-public,ted,facebook,niconico,pinterest`
+(one hit per site): **4/5 now download with both streams** - niconico 15.7MB, pinterest 0.7MB,
+ted 145.2MB, facebook 0.7MB. Notes that matter for reading these numbers:
+
+- niconico passes through the **browser capture** tier, not the native extractor: the native
+  parser fails with `PARSE_ERROR` on the redesigned watch page (documented in
+  `niconico_watch_data_parser.dart`), the registry falls through, and the captured signed
+  `delivery.domand.nicovideo.jp` URLs work for ffmpeg once the registry stopped dropping
+  `cookiesByDomain` (`ExtractorRegistry._normalizeProtocols`). The native cookie plumbing added
+  in the same phase is unit-tested only.
+- facebook: the anonymous session hit a login wall on this URL during the lane's diagnostic
+  hit (title "Facebook에 로그인"), so its fbcdn URLs carried no `efg` parameter and the result
+  rests on the MP4 byte sniffer, not on `FacebookEfgDecoder`.
+- vimeo still fails, for a reason unrelated to pairing: every exposed format is a byte-range
+  slice of one CMAF file (`/v2/range/prot/<base64 of "range=N-M">/avf/<uuid>.mp4?...&range=N-M`),
+  three uuids = three tracks, and the init range is never among the exposed slices, so any
+  single slice is a bare fragment with no `moov`. Follow-up: recognize that path shape and
+  fetch the whole file (or the DASH mpd) instead of a slice.
+- The probe line now prints the video dimensions and ffprobe duration against the
+  extractor's reported duration; a pull under 90 percent of the reported duration is reported
+  as `DL short`, not `DL ok`. The 4/5 above predates that check and has not been re-measured.
+- The 4/5 also predates rounds 2 and 3 of the phase-6 review (`docs/plan-phase6-av-pairing.md`):
+  the silent-source guard (`audioWasStripped`), the manifest scanner's fail-closed rules, the
+  cookie strip, and the duration check all landed after that run. None of the five sites has
+  been re-validated against the round-3 code; a stricter guard can legitimately turn one of
+  those `DL ok` rows into a loud failure. Re-measure with the user's approval before quoting it.
+- The full 32-site gate was NOT re-run after this change (a run was started and aborted:
+  it launches browser-capture sessions, which is not allowed without the user's approval).
+
+
 Not resolved: twitch-clip (anonymous GraphQL gated), reddit and bilibili (bot challenge), weibo
 (visitor wall). The browser login session toggle may help on those when the user is signed in.

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../../../core/download/caption_downloader.dart';
+import '../../../core/download/format_capability_resolver.dart';
 import '../../../core/download/format_request_context.dart';
 import '../../../core/download/hls_ffmpeg_downloader.dart';
 import '../../../core/download/media_merger.dart';
@@ -9,24 +10,29 @@ import '../../../core/extractors/format_selector.dart';
 import '../../../core/extractors/media_models.dart';
 import '../../../core/utils/file_mover.dart';
 import '../../../core/utils/file_utils.dart';
+import 'adaptive_pair_downloader.dart';
 import 'all_format_candidates_failed_exception.dart';
 import 'caption_download_step.dart';
 import 'download_outcome_verifier.dart';
 import 'download_service_io.dart';
+import 'single_format_downloader.dart';
 
 /// Orchestrates a single download end to end for any [MediaInfo], no matter
 /// which extractor produced it (YouTube/X/TikTok/Instagram/Generic/
-/// browser-capture): rank format candidates -> download (retrying the next
-/// candidate if one fails or produces a suspect file) -> merge/convert ->
+/// browser-capture): resolve unknown capabilities -> rank format candidates
+/// -> download (retrying the next candidate if one fails or produces a
+/// suspect file, and re-ranking with corrected metadata when the post
+/// download probe finds a mislabeled candidate) -> merge/convert ->
 /// captions.
 ///
 /// Downloading branches on `MediaFormat.protocol`: `'https'` uses
 /// `StreamDownloader` (ranged GETs), `'hls'`/`'dash'` use
-/// `HlsFfmpegDownloader` (ffmpeg reads the manifest directly). Only the
-/// muxed and audio-only paths need that branch: an adaptive video+audio
-/// pair is YouTube-only in practice (`'https'` always), and no other
-/// extractor ever produces separate video-only + audio-only HLS/DASH
-/// formats (their m3u8/mpd formats are always a single muxed format).
+/// `HlsFfmpegDownloader` (ffmpeg reads the manifest directly). An adaptive
+/// video+audio pair (`AdaptivePairDownloader`) routes each half
+/// independently, since phase 6 (`docs/plan-phase6-av-pairing.md`) made a
+/// pair's audio half a real HLS/DASH manifest possible (an alternate-audio
+/// rendition group split out of an HLS master) - pre-phase-6 an adaptive
+/// pair was YouTube-only in practice and always `'https'`.
 class MediaDownloadPipeline {
   final FormatSelector _selector;
   final StreamDownloader Function() _downloaderFactory;
@@ -35,12 +41,31 @@ class MediaDownloadPipeline {
   final FileMover _fileMover;
   final DownloadOutcomeVerifier _verifier;
   final CaptionDownloadStep _captionStep;
+  final FormatCapabilityResolver _capabilityResolver;
+  late final AdaptivePairDownloader _adaptivePairDownloader;
+  late final SingleFormatDownloader _singleFormatDownloader;
 
   /// Format candidates are tried in rank order up to this many times
   /// before giving up (fewer if `FormatSelector.rank` returned fewer): a
   /// broken/mislabeled top pick should not fail the whole download when
   /// other viable renditions exist.
+  /// Coupled to `FormatSelector._pairsBeforeMuxed` (2) and
+  /// `FormatSelector._maxPairsPerTier` (6): the selector places the first
+  /// muxed candidate at index 2 precisely so it is reachable inside these
+  /// three attempts, and its pair cap plus [correctiveRetryBudget] bound
+  /// the total. Change one of the three only with the others in view
+  /// (Plumbline, phase 6 round 3).
   static const maxAttempts = 3;
+
+  /// Extra attempts a genuine metadata correction (see [_correctedInfo])
+  /// is allowed to buy beyond [maxAttempts] - each successful correction
+  /// grants exactly one more attempt, up to this many total, so the worst
+  /// case total attempts across a whole download is `maxAttempts +
+  /// correctiveRetryBudget` (phase 6 digest P4c). A plain failure (no
+  /// correction - including every pre-phase-6 failure mode) never grants
+  /// extra budget, so a download with no corrections behaves exactly as
+  /// before: capped at [maxAttempts].
+  static const correctiveRetryBudget = 3;
 
   MediaDownloadPipeline({
     FormatSelector selector = const FormatSelector(),
@@ -51,17 +76,31 @@ class MediaDownloadPipeline {
     FileMover? fileMover,
     DownloadOutcomeVerifier? verifier,
     CaptionDownloadStep? captionStep,
+    FormatCapabilityResolver? capabilityResolver,
   })  : _selector = selector,
         _downloaderFactory = downloaderFactory ?? StreamDownloader.new,
         _hlsDownloader = hlsDownloader ?? HlsFfmpegDownloader(),
         _merger = merger ?? MediaMerger(),
         _fileMover = fileMover ?? FileMover(),
         _verifier = verifier ?? DownloadOutcomeVerifier(),
+        _capabilityResolver = capabilityResolver ?? const FormatCapabilityResolver(),
         _captionStep = captionStep ??
             CaptionDownloadStep(
               captionDownloader: captionDownloader ?? CaptionDownloader(),
               merger: merger ?? MediaMerger(),
-            );
+            ) {
+    _adaptivePairDownloader = AdaptivePairDownloader(
+      hlsDownloader: _hlsDownloader,
+      downloaderFactory: _downloaderFactory,
+      merger: _merger,
+    );
+    _singleFormatDownloader = SingleFormatDownloader(
+      hlsDownloader: _hlsDownloader,
+      downloaderFactory: _downloaderFactory,
+      merger: _merger,
+      fileMover: _fileMover,
+    );
+  }
 
   /// Runs the full pipeline. [onProgress] receives 0.0-1.0 per attempt
   /// (0-0.9 for the raw download, 0.9-1.0 for merge/convert) and resets to
@@ -76,53 +115,98 @@ class MediaDownloadPipeline {
     void Function(double progress)? onProgress,
     void Function(String message)? onStatus,
   }) async {
-    final candidates = _selector.rank(info, type, options);
-    if (candidates.isEmpty) {
-      throw const NoDownloadableFormatsException();
-    }
+    var currentInfo = await _capabilityResolver.resolve(info);
+    var rankedQueue = _selector.rank(currentInfo, type, options);
+    if (rankedQueue.isEmpty) throw _nothingToTry(currentInfo, 0);
 
-    final rawBaseName = FileUtils.sanitizeFileName(info.title.isEmpty ? info.id : info.title);
+    final rawBaseName = FileUtils.sanitizeFileName(currentInfo.title.isEmpty ? currentInfo.id : currentInfo.title);
     final baseName = FileUtils.fitBaseNameToPath(outputDir, rawBaseName);
-    final requestContext = FormatRequestContext.fromInfo(info);
-    final attempts = candidates.length < maxAttempts ? candidates.length : maxAttempts;
+    var requestContext = FormatRequestContext.fromInfo(currentInfo);
+    // The denominator shown to the user in "Retrying with another format
+    // (i/n)..." is fixed at the plan visible after attempt 1, never
+    // inflated by a later corrective re-rank extending how many attempts
+    // actually run past it.
+    final plannedAttempts = rankedQueue.length < maxAttempts ? rankedQueue.length : maxAttempts;
 
+    final triedTupleKeys = <String>{};
     Object? lastError;
-    for (var i = 0; i < attempts; i++) {
-      final selected = candidates[i];
-      final tempPrefix = '$outputDir/.mida_tmp_${info.id}_${DateTime.now().millisecondsSinceEpoch}_$i';
+    var totalAttempted = 0;
+    var displayIndex = 0;
+    var correctionsGranted = 0;
+
+    while (totalAttempted < maxAttempts + correctionsGranted) {
+      // Re-ranked from [currentInfo] on every iteration (not a stale
+      // snapshot kept across attempts): a plain failure leaves [currentInfo]
+      // unchanged, so this is a cheap no-op recompute of the identical
+      // order; a genuine correction below changes [currentInfo], and this
+      // is what makes the very next attempt actually see it.
+      rankedQueue = _selector.rank(currentInfo, type, options);
+      final selected = _firstUntried(rankedQueue, triedTupleKeys);
+      if (selected == null) break; // nothing left this re-rank offered that has not already failed
+
+      triedTupleKeys.add(_tupleKey(selected));
+      totalAttempted++;
+      displayIndex++;
+      final tempPrefix = '$outputDir/.mida_tmp_${currentInfo.id}_${DateTime.now().millisecondsSinceEpoch}_$totalAttempted';
 
       onProgress?.call(0.0);
-      if (i == 0) {
+      if (displayIndex == 1) {
         onStatus?.call('Downloading...');
         if (type == DownloadType.video) _verifier.announceQualityMismatch(selected, options, onStatus);
       } else {
-        onStatus?.call('Retrying with another format (${i + 1}/$attempts)...');
+        onStatus?.call('Retrying with another format ($displayIndex/$plannedAttempts)...');
       }
 
       String? finalPath;
       try {
+        DownloadedOutput downloaded;
         if (type == DownloadType.audio) {
-          finalPath = await _downloadAudioOnly(
-            selected, options, baseName, outputDir, tempPrefix, requestContext, info.duration, onProgress, onStatus,
+          downloaded = await _singleFormatDownloader.downloadAudioOnly(
+            selected, options, baseName, outputDir, tempPrefix, requestContext, currentInfo.duration, onProgress, onStatus,
           );
         } else if (selected.isAdaptivePair) {
-          finalPath = await _downloadAdaptivePair(
-            selected, options, baseName, outputDir, tempPrefix, requestContext, onProgress, onStatus,
+          downloaded = await _adaptivePairDownloader.download(
+            selected: selected,
+            options: options,
+            baseName: baseName,
+            outputDir: outputDir,
+            tempPrefix: tempPrefix,
+            requestContext: requestContext,
+            duration: currentInfo.duration,
+            onProgress: onProgress,
+            onStatus: onStatus,
           );
         } else {
-          finalPath = await _downloadMuxed(
-            selected, options, baseName, outputDir, tempPrefix, requestContext, info.duration, onProgress, onStatus,
+          downloaded = await _singleFormatDownloader.downloadMuxed(
+            selected, options, baseName, outputDir, tempPrefix, requestContext, currentInfo.duration, onProgress, onStatus,
           );
         }
+        finalPath = downloaded.path;
 
         // Always runs for a video download (never skipped based on the
         // selected format's own hasAudio/hasVideo flags): the probe result
         // itself, not what the extractor claimed, is what "no audio track"
-        // status/failure decisions are based on.
-        await _verifier.verifyOutput(finalPath, selected, type, onStatus);
+        // status/failure decisions are based on. `expectedDuration` (round
+        // 2 P-R9) lets the verifier reject a truncated merge (real duration
+        // far short of the source's own reported one), not just a missing
+        // stream type.
+        await _verifier.verifyOutput(
+          finalPath,
+          selected,
+          type,
+          onStatus,
+          // Round 3 P-R3-5: the source's own reported duration when it has
+          // one, otherwise what the manifest chain declared
+          // (`#EXTINF` sum / `mediaPresentationDuration`, read during the
+          // pre-download safety scan). A truncated download of a source
+          // whose extractor reported no duration used to pass unchecked;
+          // the manifest's own statement is a second, independent number
+          // to hold the output against.
+          expectedDuration: currentInfo.duration ?? downloaded.declaredDuration,
+        );
 
         await _captionStep.run(
-          info: info,
+          info: currentInfo,
           options: options,
           baseName: baseName,
           outputDir: outputDir,
@@ -132,8 +216,27 @@ class MediaDownloadPipeline {
         );
         onProgress?.call(1.0);
         return finalPath;
+      } on OutputTrackMismatchException catch (e) {
+        // Per digest P4c: a mismatch on a *single muxed* format is a real,
+        // actionable correction (that one format's own flags were wrong -
+        // copy what ffprobe actually found onto it and re-rank). A mismatch
+        // on an *adaptive pair* only tells us the merged output as a whole
+        // was missing a track, not which half was actually at fault - so a
+        // pair never gets its flags rewritten here, only its tuple recorded
+        // as failed (via [triedTupleKeys] below), letting the next re-rank
+        // offer a genuinely different candidate instead of guessing.
+        lastError = e;
+        await _tryDelete(finalPath);
+        if (selected.muxed != null && correctionsGranted < correctiveRetryBudget) {
+          final corrected = _correctedInfo(currentInfo, selected.muxed!, e);
+          if (corrected != null) {
+            correctionsGranted++;
+            currentInfo = corrected;
+            requestContext = FormatRequestContext.fromInfo(currentInfo);
+          }
+        }
       } on Exception catch (e) {
-        // One clause deliberately covers every failure shape a
+        // One clause deliberately covers every other failure shape a
         // downloader/builder can throw for a single candidate -
         // `StreamDownloadException`, `MediaMergeException`,
         // `HeaderInjectionException`, `MediaExtractionException` (the HLS
@@ -146,243 +249,99 @@ class MediaDownloadPipeline {
       }
     }
 
-    throw AllFormatCandidatesFailedException(attempts, lastError!);
+    if (lastError == null) throw _nothingToTry(currentInfo, totalAttempted);
+    throw AllFormatCandidatesFailedException(totalAttempted, lastError);
   }
 
-  /// Builds the in-progress temp path ffmpeg writes to before it is moved
-  /// to [outputPath] on success. Inserted *before* the real extension
-  /// (`name.mp4` -> `name.part.mp4`), not appended after it
-  /// (`name.mp4.part`): ffmpeg's muxer auto-detection keys off the output
-  /// filename's extension, so a trailing `.part` makes it fail with
-  /// "Error initializing the muxer" instead of actually writing an mp4
-  /// (caught live: `test/live/pipeline_live_test.dart`'s HLS case).
-  String _partPathFor(String outputPath) {
-    final dot = outputPath.lastIndexOf('.');
-    if (dot == -1) return '$outputPath.part';
-    return '${outputPath.substring(0, dot)}.part${outputPath.substring(dot)}';
+  /// The failure to throw when ranking offered nothing (left) to try.
+  /// Normally that is [NoDownloadableFormatsException] - the source had no
+  /// usable format at all. When some format is
+  /// [MediaFormat.audioWasStripped], though, the truthful reason is
+  /// narrower and worth saying out loud (round 3 P-R3-1): there IS a video
+  /// here, and MiDa is refusing to hand back a silent copy of it rather
+  /// than pretending the source was muted. The stripped case is always
+  /// wrapped in [AllFormatCandidatesFailedException] (even at [attempted]
+  /// 0, when the refusal happened before any download started), so a
+  /// caller's existing "every candidate failed" handling covers it without
+  /// a new branch.
+  Exception _nothingToTry(MediaInfo info, int attempted) {
+    final audioWasStripped = info.formats.any((f) => f.audioWasStripped);
+    if (!audioWasStripped) {
+      return attempted == 0
+          ? const NoDownloadableFormatsException()
+          : AllFormatCandidatesFailedException(attempted, const NoDownloadableFormatsException());
+    }
+    return AllFormatCandidatesFailedException(
+      attempted,
+      const NoDownloadableFormatsException(
+        'This video has audio, but none of its audio tracks could be downloaded, so MiDa will not save it as a '
+        'silent video. Try again later, or download it from a page where its audio is not restricted.',
+      ),
+    );
   }
 
-  Future<String> _downloadAudioOnly(
-    SelectedFormats selected,
-    DownloadOptions options,
-    String baseName,
-    String outputDir,
-    String tempPrefix,
-    FormatRequestContext requestContext,
-    Duration? duration,
-    void Function(double progress)? onProgress,
-    void Function(String message)? onStatus,
-  ) async {
-    final audio = selected.audio!;
-    if (selected.needsAudioExtraction) {
-      onStatus?.call('No separate audio track offered; extracting audio from the video stream...');
+  /// First entry in [rankedQueue] whose tuple key is not already in
+  /// [tried] - a full re-rank after a correction can (and usually does)
+  /// re-offer an already-failed candidate at a different position, so this
+  /// always scans from the top rather than resuming from some prior index.
+  SelectedFormats? _firstUntried(List<SelectedFormats> rankedQueue, Set<String> tried) {
+    for (final candidate in rankedQueue) {
+      if (!tried.contains(_tupleKey(candidate))) return candidate;
     }
-
-    final outputPath = await FileUtils.getUniqueFilePath('$outputDir/$baseName.${options.audioFormat.value}');
-
-    if (_needsFfmpeg(audio)) {
-      final partPath = _partPathFor(outputPath);
-      try {
-        await _hlsDownloader.downloadVerified(
-          url: audio.url,
-          outputPath: partPath,
-          headers: requestContext.headers,
-          cookiesByDomain: requestContext.cookiesByDomain,
-          audioOnly: true,
-          audioCodecArgs: _merger.audioCodecArgs(options.audioFormat),
-          totalDuration: duration,
-          onProgress: (p) => onProgress?.call(p * 0.9),
-        );
-        onProgress?.call(0.9);
-        await _fileMover.move(partPath, outputPath);
-        return outputPath;
-      } catch (_) {
-        await _tryDelete(partPath);
-        rethrow;
-      }
-    }
-
-    final tempPath = '$tempPrefix.${audio.container}';
-    try {
-      final totalLen = audio.contentLength ?? 0;
-      await _downloadFormat(audio, tempPath, requestContext, (received) {
-        if (totalLen > 0) onProgress?.call((received / totalLen) * 0.9);
-      });
-
-      onProgress?.call(0.9);
-      final args = _merger.buildAudioConvertArgs(
-        inputPath: tempPath,
-        outputPath: outputPath,
-        format: options.audioFormat,
-        quality: options.audioQuality,
-      );
-      await _merger.run(args);
-      return outputPath;
-    } finally {
-      await _tryDelete(tempPath);
-    }
+    return null;
   }
 
-  Future<String> _downloadAdaptivePair(
-    SelectedFormats selected,
-    DownloadOptions options,
-    String baseName,
-    String outputDir,
-    String tempPrefix,
-    FormatRequestContext requestContext,
-    void Function(double progress)? onProgress,
-    void Function(String message)? onStatus,
-  ) async {
-    final video = selected.video!;
-    final audio = selected.audio!;
-    final videoTemp = '$tempPrefix.video.${video.container}';
-    final audioTemp = '$tempPrefix.audio.${audio.container}';
-
-    try {
-      final videoLen = video.contentLength ?? 0;
-      final audioLen = audio.contentLength ?? 0;
-      final totalLen = videoLen + audioLen;
-
-      await _downloadFormat(video, videoTemp, requestContext, (received) {
-        if (totalLen > 0) onProgress?.call((received / totalLen) * 0.9);
-      });
-      await _downloadFormat(audio, audioTemp, requestContext, (received) {
-        if (totalLen > 0) onProgress?.call(((videoLen + received) / totalLen) * 0.9);
-      });
-
-      final transcodeVideo = selected.videoNeedsTranscode;
-      final transcodeAudio = selected.audioNeedsTranscode;
-      onStatus?.call(
-        transcodeVideo || transcodeAudio
-            ? 'Merging (transcoding ${transcodeVideo ? 'video' : ''}'
-                '${transcodeVideo && transcodeAudio ? ' and ' : ''}'
-                '${transcodeAudio ? 'audio' : ''} to fit ${options.videoFormat.label})...'
-            : 'Merging...',
-      );
-      onProgress?.call(0.9);
-      final outputPath = await FileUtils.getUniqueFilePath(
-        '$outputDir/$baseName.${options.videoFormat.value}',
-      );
-      await _merger.run(_merger.buildMergeArgs(
-        videoPath: videoTemp,
-        audioPath: audioTemp,
-        outputPath: outputPath,
-        container: options.videoFormat,
-        transcodeVideo: transcodeVideo,
-        transcodeAudio: transcodeAudio,
-      ));
-      return outputPath;
-    } finally {
-      await _tryDelete(videoTemp);
-      await _tryDelete(audioTemp);
-    }
+  /// Identifies a ranked candidate by the exact [MediaFormat] *instance*(s)
+  /// it uses (round 2 P-R4, Codex#2), not by [MediaFormat.id]: a provider's
+  /// own id string is attacker/source-controlled input and is not
+  /// guaranteed unique across every format `FormatSelector` could ever
+  /// offer in one [MediaInfo] (two direct-candidate formats built from the
+  /// same URL, say, both end up with that URL as their id - see
+  /// `FormatExpander.formatFor`/`CapturedFormatBuilder._formatFor`). Keying
+  /// on `identityHashCode` instead means two formats that merely share an
+  /// id string are still tracked as different candidates, and - together
+  /// with [_correctedInfo] matching by `identical()` - a correction can
+  /// never silently overwrite a *different* format that just happens to
+  /// carry the same id.
+  String _tupleKey(SelectedFormats selected) {
+    if (selected.muxed != null) return 'm:${identityHashCode(selected.muxed)}';
+    return 'p:${identityHashCode(selected.video)}:${identityHashCode(selected.audio)}';
   }
 
-  Future<String> _downloadMuxed(
-    SelectedFormats selected,
-    DownloadOptions options,
-    String baseName,
-    String outputDir,
-    String tempPrefix,
-    FormatRequestContext requestContext,
-    Duration? duration,
-    void Function(double progress)? onProgress,
-    void Function(String message)? onStatus,
-  ) async {
-    final muxed = selected.muxed!;
-
-    if (_needsFfmpeg(muxed)) {
-      final outputPath = await FileUtils.getUniqueFilePath('$outputDir/$baseName.${options.videoFormat.value}');
-      final partPath = _partPathFor(outputPath);
-      onStatus?.call('Downloading (stream)...');
-      try {
-        await _hlsDownloader.downloadVerified(
-          url: muxed.url,
-          outputPath: partPath,
-          headers: requestContext.headers,
-          cookiesByDomain: requestContext.cookiesByDomain,
-          totalDuration: duration,
-          onProgress: (p) => onProgress?.call(p * 0.9),
-        );
-        onProgress?.call(0.9);
-        await _fileMover.move(partPath, outputPath);
-        return outputPath;
-      } catch (_) {
-        await _tryDelete(partPath);
-        rethrow;
-      }
-    }
-
-    final tempPath = '$tempPrefix.${muxed.container}';
-    try {
-      final totalLen = muxed.contentLength ?? 0;
-      await _downloadFormat(muxed, tempPath, requestContext, (received) {
-        if (totalLen > 0) onProgress?.call((received / totalLen) * 0.9);
-      });
-      onProgress?.call(0.9);
-
-      if (muxed.container == options.videoFormat.value) {
-        final outputPath = await FileUtils.getUniqueFilePath('$outputDir/$baseName.${muxed.container}');
-        await _fileMover.move(tempPath, outputPath);
-        return outputPath;
-      }
-
-      final outputPath = await FileUtils.getUniqueFilePath(
-        '$outputDir/$baseName.${options.videoFormat.value}',
-      );
-      try {
-        await _merger.run(_merger.buildRemuxArgs(inputPath: tempPath, outputPath: outputPath));
-        return outputPath;
-      } on MediaMergeException catch (e) {
-        // Container change failed (e.g. codec unsupported by the container):
-        // keep the original file rather than losing the download entirely.
-        onStatus?.call('Kept original format (container conversion failed: ${e.message})');
-        final fallbackPath = await FileUtils.getUniqueFilePath('$outputDir/$baseName.${muxed.container}');
-        await _fileMover.move(tempPath, fallbackPath);
-        return fallbackPath;
-      }
-    } finally {
-      // If either branch above moved tempPath away, this is a safe no-op
-      // (the file no longer exists at tempPath); otherwise it deletes the
-      // now-unneeded temp on both success and any other exception.
-      await _tryDelete(tempPath);
-    }
-  }
-
-  /// True when [format] must go through `HlsFfmpegDownloader` rather than
-  /// `StreamDownloader`: either it is already labeled `hls`/`dash`, or -
-  /// live-caught (coordinator repro) - its own URL path plainly ends in
-  /// `.m3u8`/`.mpd` despite being labeled `https`. A manifest handed to
-  /// `StreamDownloader` is not itself the media (`StreamDownloader` would
-  /// just download the manifest TEXT as if it were a video file), so a
-  /// mislabeled one must be routed to ffmpeg, which can actually read it.
-  /// The query string is stripped first so a signed URL like
-  /// `manifest.m3u8?token=...` still matches.
-  static bool _needsFfmpeg(MediaFormat format) {
-    if (format.protocol != 'https') return true;
-    final path = Uri.tryParse(format.url)?.path.toLowerCase() ?? '';
-    return path.endsWith('.m3u8') || path.endsWith('.mpd');
-  }
-
-  Future<void> _downloadFormat(
-    MediaFormat format,
-    String outputPath,
-    FormatRequestContext requestContext,
-    void Function(int received)? onProgress,
-  ) async {
-    final downloader = _downloaderFactory();
-    try {
-      await downloader.download(
-        url: format.url,
-        outputPath: outputPath,
-        headers: requestContext.headers,
-        cookiesByDomain: requestContext.cookiesByDomain,
-        contentLength: format.contentLength,
-        onProgress: onProgress == null ? null : (received, total) => onProgress(received),
-      );
-    } finally {
-      downloader.close();
-    }
+  /// Builds a corrected [MediaInfo] with [original] (the single muxed
+  /// format that just failed its post-download probe) replaced by a
+  /// `copyWith` of what [mismatch] actually found - `null` only if
+  /// [original] is somehow no longer present in [current.formats] (should
+  /// not happen in practice: it came from ranking [current] in the first
+  /// place). Matches by object identity (`identical`), not
+  /// [MediaFormat.id] (round 2 P-R4): replacing by id could rewrite a
+  /// *different* format that happens to carry the same (source-controlled)
+  /// id string as [original] - only the exact instance the pipeline just
+  /// selected and tried is ever touched. Rebuilt via [MediaInfo.copyWith]
+  /// (round 2 P-R9) rather than a hand-spelled field list, so a field added
+  /// to [MediaInfo] later cannot be silently dropped here the way
+  /// `cookiesByDomain` once was.
+  MediaInfo? _correctedInfo(MediaInfo current, MediaFormat original, OutputTrackMismatchException mismatch) {
+    if (!current.formats.any((f) => identical(f, original))) return null;
+    final corrected = original.copyWith(
+      hasVideo: mismatch.hasVideo,
+      hasAudio: mismatch.hasAudio,
+      capabilitiesUnknown: false,
+      // Round 3 P-R3-1b (Gadfly C1/C2): a correction that lands on
+      // "no audio" is not the same fact as a source that never claimed
+      // any. [original] did claim audio and the delivered file had none,
+      // so the corrected format is marked stripped and `FormatSelector`'s
+      // silent-source tier refuses it - which is what turns this into a
+      // loud `AllFormatCandidatesFailedException` instead of a retry that
+      // re-downloads the same URL and accepts the same silent file as
+      // success. A correction in the other direction (the probe found the
+      // audio a video-only format did not claim) clears the flag, since
+      // nothing was stripped after all.
+      audioWasStripped: !mismatch.hasAudio,
+    );
+    return current.copyWith(
+      formats: [for (final f in current.formats) identical(f, original) ? corrected : f],
+    );
   }
 
   Future<void> _tryDelete(String? path) async {

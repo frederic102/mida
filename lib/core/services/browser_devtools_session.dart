@@ -188,7 +188,19 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       // (observed leaking a `mida_cdp_*` dir on Windows roughly 1 run in
       // 4 without this).
       if (process != null) await killAndAwaitExit(process);
-      final cleanedUp = await BrowserTempCleanup.deleteQuietly(profileDir);
+      var cleanedUp = await BrowserTempCleanup.deleteQuietly(profileDir);
+      // Escalate past `deleteQuietly`'s own single 300ms retry (lane D
+      // flake hunt, 2026-09-06): under heavy host contention (CPU/disk
+      // starved enough that even the OS/antivirus own housekeeping lags)
+      // that one retry is occasionally not enough, and this directory
+      // would otherwise sit for up to an hour before `sweepStale` gets to
+      // it. This is already the slow failure path, so a few more short
+      // waits here (bounded, ~0.9s worst case) cost nothing a caller would
+      // notice, in exchange for not leaking a profile dir under load.
+      for (var attempt = 0; !cleanedUp && attempt < 3; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        cleanedUp = await BrowserTempCleanup.deleteQuietly(profileDir);
+      }
       final cleanupNote =
           cleanedUp ? '' : ' A temporary browser profile folder could not be removed and may remain in your system temp directory.';
       if (e is MediaExtractionException) {

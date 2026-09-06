@@ -41,6 +41,32 @@ class MediaFormat {
   /// duplication of that mapping.
   final String protocol;
 
+  /// HLS/DASH pairing key (phase 6 round 2 contract). For a video-only
+  /// variant: the `AUDIO=` rendition group it references; for an
+  /// audio-only rendition: its own `GROUP-ID`. `FormatSelector` only pairs
+  /// a video-only format with an audio-only format when both are null or
+  /// both are equal, so a master with two audio groups never merges group
+  /// B's video with group A's audio. Null for every non-HLS format.
+  final String? audioGroupId;
+
+  /// Rendition preference within [audioGroupId] (phase 6 round 2
+  /// contract): 0 = `DEFAULT=YES`, 1 = `AUTOSELECT=YES`, 2 = anything
+  /// else, higher = deprioritized (descriptive/commentary tracks).
+  /// `FormatSelector` sorts audio-only candidates by this before bitrate
+  /// so the playlist's own default track wins a bitrate tie
+  /// deterministically instead of by list order.
+  final int audioPreference;
+
+  /// Phase 6 round 3 (lead contract). True when this format is known to
+  /// carry no audio for a reason that must NOT be read as "the source is
+  /// genuinely silent": its HLS audio group existed but every rendition was
+  /// excluded (DRM/unreachable), or the source claimed audio and ffprobe
+  /// proved the delivered file had none (pipeline correction). The
+  /// selector's silent-source tier must never accept such a format, so a
+  /// video the user expects to have sound fails loudly instead of shipping
+  /// as a silent file marked success.
+  final bool audioWasStripped;
+
   const MediaFormat({
     required this.id,
     required this.url,
@@ -56,6 +82,9 @@ class MediaFormat {
     required this.hasAudio,
     this.capabilitiesUnknown = false,
     this.protocol = 'https',
+    this.audioGroupId,
+    this.audioPreference = 2,
+    this.audioWasStripped = false,
   });
 
   bool get isMuxed => hasVideo && hasAudio;
@@ -64,22 +93,48 @@ class MediaFormat {
 
   /// Returns a copy with [protocol] replaced, everything else unchanged.
   /// Used by [ExtractorRegistry.resolveInfo] to stamp the derived protocol
-  /// onto formats an extractor built with the default `'https'`.
-  MediaFormat withProtocol(String protocol) => MediaFormat(
+  /// onto formats an extractor built with the default `'https'`. Delegates
+  /// to [copyWith] so there is exactly one field-wise constructor call to
+  /// keep in sync when a field is added (a hand-rolled rebuild dropping a
+  /// field is what caused the phase 6 cookie loss).
+  MediaFormat withProtocol(String protocol) => copyWith(protocol: protocol);
+
+  /// Field-wise copy (phase 6 contract). Null means "keep the current
+  /// value" for every parameter, so this can add or replace information
+  /// but never clear a nullable field back to null; callers that need to
+  /// clear one must construct a new [MediaFormat] explicitly.
+  MediaFormat copyWith({
+    String? videoCodec,
+    String? audioCodec,
+    int? width,
+    int? height,
+    int? contentLength,
+    bool? hasVideo,
+    bool? hasAudio,
+    bool? capabilitiesUnknown,
+    String? protocol,
+    String? audioGroupId,
+    int? audioPreference,
+    bool? audioWasStripped,
+  }) =>
+      MediaFormat(
         id: id,
         url: url,
         container: container,
-        videoCodec: videoCodec,
-        audioCodec: audioCodec,
-        width: width,
-        height: height,
+        videoCodec: videoCodec ?? this.videoCodec,
+        audioCodec: audioCodec ?? this.audioCodec,
+        width: width ?? this.width,
+        height: height ?? this.height,
         fps: fps,
         bitrate: bitrate,
-        contentLength: contentLength,
-        hasVideo: hasVideo,
-        hasAudio: hasAudio,
-        capabilitiesUnknown: capabilitiesUnknown,
-        protocol: protocol,
+        contentLength: contentLength ?? this.contentLength,
+        hasVideo: hasVideo ?? this.hasVideo,
+        hasAudio: hasAudio ?? this.hasAudio,
+        capabilitiesUnknown: capabilitiesUnknown ?? this.capabilitiesUnknown,
+        protocol: protocol ?? this.protocol,
+        audioGroupId: audioGroupId ?? this.audioGroupId,
+        audioPreference: audioPreference ?? this.audioPreference,
+        audioWasStripped: audioWasStripped ?? this.audioWasStripped,
       );
 
   @override
@@ -171,6 +226,31 @@ class MediaInfo {
     this.requestHeaders = const {},
     this.cookiesByDomain = const {},
   });
+
+  /// Field-wise copy (phase 6 round 2 contract). The single place that
+  /// rebuilds a [MediaInfo]; every caller that used to spell out all
+  /// fields by hand (`ExtractorRegistry._normalizeProtocols`,
+  /// `FormatCapabilityResolver`, `MediaDownloadPipeline`) must go through
+  /// this so a newly added field can never be silently dropped again.
+  MediaInfo copyWith({
+    List<MediaFormat>? formats,
+    List<CaptionTrack>? captions,
+    Map<String, String>? requestHeaders,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
+  }) =>
+      MediaInfo(
+        id: id,
+        title: title,
+        author: author,
+        thumbnailUrl: thumbnailUrl,
+        duration: duration,
+        formats: formats ?? this.formats,
+        captions: captions ?? this.captions,
+        translatableLanguageCodes: translatableLanguageCodes,
+        sourceUrl: sourceUrl,
+        requestHeaders: requestHeaders ?? this.requestHeaders,
+        cookiesByDomain: cookiesByDomain ?? this.cookiesByDomain,
+      );
 }
 
 /// Raised when the source explicitly refused to return playable formats

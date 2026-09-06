@@ -76,7 +76,8 @@ class NiconicoExtractor implements MediaExtractor {
       );
     }
 
-    final contentUri = await _sessionClient.startSession(watchData.sessionApi);
+    final session = await _sessionClient.startSession(watchData.sessionApi);
+    final contentUri = session.contentUri;
 
     return MediaInfo(
       id: watchData.id,
@@ -94,7 +95,12 @@ class NiconicoExtractor implements MediaExtractor {
         ),
       ],
       sourceUrl: url,
-      requestHeaders: const {'User-Agent': _userAgent},
+      // Referer matches the page the video actually plays on - the same
+      // header the delivery CDN sees from a real browser session, per
+      // docs/plan-phase6-av-pairing.md Lane N (N2/N3): only what a real
+      // client sends, never a spoofed fingerprint or a solved challenge.
+      requestHeaders: const {'User-Agent': _userAgent, 'Referer': 'https://www.nicovideo.jp/'},
+      cookiesByDomain: session.cookiesByDomain,
     );
   }
 

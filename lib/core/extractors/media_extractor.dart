@@ -202,21 +202,15 @@ class ExtractorRegistry {
     );
   }
 
+  // Round 2 (`docs/plan-phase6-av-pairing.md`, P-R9): rebuilds via
+  // `MediaInfo.copyWith` rather than a hand-spelled field list - that
+  // hand-rolled version is exactly what dropped `cookiesByDomain` in round
+  // 1 (docs' own C1/N1 finding), and a field added to `MediaInfo` later can
+  // never be silently missed here again.
   static MediaInfo _normalizeProtocols(MediaInfo info) {
     final needsChange = info.formats.any((f) => f.protocol != _protocolFor(f.container));
     if (!needsChange) return info;
-    return MediaInfo(
-      id: info.id,
-      title: info.title,
-      author: info.author,
-      thumbnailUrl: info.thumbnailUrl,
-      duration: info.duration,
-      formats: [for (final f in info.formats) f.withProtocol(_protocolFor(f.container))],
-      captions: info.captions,
-      translatableLanguageCodes: info.translatableLanguageCodes,
-      sourceUrl: info.sourceUrl,
-      requestHeaders: info.requestHeaders,
-    );
+    return info.copyWith(formats: [for (final f in info.formats) f.withProtocol(_protocolFor(f.container))]);
   }
 
   static String _protocolFor(String container) {

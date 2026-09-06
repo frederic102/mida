@@ -59,4 +59,33 @@ class OutputStreamProber {
     if (result.exitCode != 0 && types.isEmpty) return const <String>{};
     return types;
   }
+
+  /// Phase 6 round 2 (S-R7): the container-level `format=duration` (in
+  /// whole seconds plus fraction) ffprobe reports for [path], or null when
+  /// ffprobe could not even be run, its exit was non-zero, or the value it
+  /// printed could not be parsed as a positive number. Unlike
+  /// [streamTypes], there is no "confirmed empty" distinction worth making
+  /// here - a duration we could not read is simply unknown, never
+  /// evidence of anything on its own, so [DownloadOutcomeVerifier] treats
+  /// null the same as "nothing to compare against" rather than a failure.
+  Future<Duration?> duration(String path) async {
+    ProcessResult result;
+    try {
+      final ffprobePath = await _ffprobePathResolver();
+      result = await Process.run(ffprobePath, [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'csv=p=0',
+        path,
+      ]);
+    } catch (_) {
+      return null;
+    }
+    if (result.exitCode != 0) return null;
+    final stdout = result.stdout;
+    if (stdout is! String) return null;
+    final seconds = double.tryParse(stdout.trim());
+    if (seconds == null || !seconds.isFinite || seconds <= 0) return null;
+    return Duration(milliseconds: (seconds * 1000).round());
+  }
 }

@@ -2,6 +2,7 @@ import '../browser_capture/format_capabilities.dart';
 import '../media_models.dart';
 import 'drm_playlist_scanner.dart';
 import 'facebook_efg_decoder.dart';
+import 'hls_master_format_mapper.dart';
 import 'hls_playlist_parser.dart';
 import 'network_budget.dart';
 
@@ -170,38 +171,61 @@ class FormatExpander {
     // surfaces its clean renditions. Only once every variant we could
     // check (or that budget let us check) turns out encrypted is the
     // whole candidate treated as DRM-only.
+    //
+    // Phase 6: the same bounded check now also covers every distinct
+    // `#EXT-X-MEDIA` alternate-audio rendition URI a kept variant
+    // references (not just `#EXT-X-STREAM-INF` variant URLs) - sharing one
+    // [variantBudget]/[drmVerdicts] pair with the video-variant checks
+    // above, so a master with both still spends at most [_maxVariantChecks]
+    // fetches total, not that many per list.
     final variantBudget = NetworkBudget(maxFetches: _maxVariantChecks);
+    final drmVerdicts = <String, bool>{};
+    Future<bool> isDrmProtected(String checkUrl) async {
+      final cached = drmVerdicts[checkUrl];
+      if (cached != null) return cached;
+      final verdict = variantBudget.tryConsume()
+          ? await _isVariantDrmProtected(checkUrl, extraHeaders)
+          // Budget exhausted: cannot verify this one, so it is trusted as
+          // before (fail-open on being unable to check, not on a positive
+          // DRM finding - the same posture the mpd fetch above takes on a
+          // network failure).
+          : false;
+      drmVerdicts[checkUrl] = verdict;
+      return verdict;
+    }
+
     final keptVariants = <HlsVariant>[];
     for (final variant in variants) {
-      if (!variantBudget.tryConsume()) {
-        // Budget exhausted: cannot verify this one, so it is trusted as
-        // before (fail-open on being unable to check, not on a positive
-        // DRM finding - the same posture the mpd fetch above takes on a
-        // network failure).
-        keptVariants.add(variant);
-        continue;
-      }
-      if (!await _isVariantDrmProtected(variant.url, extraHeaders)) {
-        keptVariants.add(variant);
-      }
+      if (!await isDrmProtected(variant.url)) keptVariants.add(variant);
     }
 
     if (keptVariants.isEmpty) {
       return const ExpandedFormats(drmDetected: true);
     }
 
-    return ExpandedFormats(formats: [
-      for (var i = 0; i < keptVariants.length; i++)
-        formatFor(
-          id: '$url#$i',
-          url: keptVariants[i].url,
-          container: 'm3u8',
-          width: keptVariants[i].width,
-          height: keptVariants[i].height,
-          bitrate: keptVariants[i].bandwidth,
-          capabilities: capabilities,
-        ),
-    ]);
+    // The full (unfiltered) rendition list is still handed to the mapper -
+    // only the DRM'd URIs themselves are collected separately - so a
+    // variant whose audio group had a real, separately-fetchable rendition
+    // that later failed its own DRM check still gets classified video-only
+    // (the group membership itself is the video-only signal, not whether
+    // every rendition in it survived this scan): see
+    // [HlsMasterFormatMapper.formatsForVariants]'s own [excludedAudioUris]
+    // doc for the collapse this avoids.
+    final audioRenditions = HlsPlaylistParser.parseAudioRenditions(fetch.body, Uri.parse(url));
+    final excludedAudioUris = <String>{};
+    for (final rendition in audioRenditions) {
+      if (await isDrmProtected(rendition.uri)) excludedAudioUris.add(rendition.uri);
+    }
+
+    return ExpandedFormats(
+      formats: HlsMasterFormatMapper.formatsForVariants(
+        url,
+        keptVariants,
+        audioRenditions,
+        defaultCaps: capabilities,
+        excludedAudioUris: excludedAudioUris,
+      ),
+    );
   }
 
   /// Fetches a DASH `.mpd` manifest purely to scan it for DRM signals

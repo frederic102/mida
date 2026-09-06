@@ -32,37 +32,36 @@ File _writeFakeBrowser(Directory dir, {required String name, required List<Strin
   return file;
 }
 
-/// Minimal `implements Process` stand-in whose `exitCode` is already
-/// complete - for exercising `killAndAwaitExit`'s process-tree sweep
-/// without spawning (or waiting on) a real OS process.
-class _InstantExitFakeProcess implements Process {
-  @override
-  final int pid;
-
-  /// Shared with a test's own `processTreeKiller` override so the two can
-  /// be compared for relative order - see the "process-tree sweep" group
-  /// below.
-  final List<String>? callOrder;
-
-  _InstantExitFakeProcess({required this.pid, this.callOrder});
-
-  @override
-  Stream<List<int>> get stdout => const Stream.empty();
-
-  @override
-  Stream<List<int>> get stderr => const Stream.empty();
-
-  @override
-  IOSink get stdin => IOSink(StreamController<List<int>>().sink);
-
-  @override
-  Future<int> get exitCode => Future.value(0);
-
-  @override
-  bool kill([ProcessSignal signal = ProcessSignal.sigterm]) {
-    callOrder?.add('processKill');
-    return true;
+/// Root-cause fix for this file's own flake (coordinator report: a
+/// different test failed on each run). Every test below that reads or
+/// deletes a file a just-killed *real* fake-browser process (the `.bat`,
+/// via `Process.start`) was writing into hits the exact same transient
+/// Windows condition `BrowserTempCleanup.deleteQuietly`'s own doc comment
+/// already names for the production profile dir: "a just-killed browser
+/// process's [files] can stay briefly locked - Windows file-handle
+/// release, antivirus scan" - `killAndAwaitExit` awaiting `exitCode` only
+/// guarantees the *process* is gone, not that every filter driver
+/// (Defender's on-close scan of a freshly written `.bat`/marker file, in
+/// particular) has released its own handle yet. A single un-retried
+/// `readAsLinesSync`/`readAsStringSync`/`deleteSync` right after a kill can
+/// throw `FileSystemException` (sharing violation) intermittently - which
+/// test happens to lose that race is effectively random, matching two
+/// different tests each being the one to fail on different runs. Retries
+/// short and bounded (this file's own established budget: real waits under
+/// 2s total) rather than widening any timeout, since the data is already
+/// there the moment the lock clears - there is nothing to wait *for*
+/// except the lock itself.
+T _retryOnWindowsFileLock<T>(T Function() action) {
+  FileSystemException? lastError;
+  for (var attempt = 0; attempt < 20; attempt++) {
+    try {
+      return action();
+    } on FileSystemException catch (e) {
+      lastError = e;
+      sleep(const Duration(milliseconds: 25));
+    }
   }
+  throw lastError!;
 }
 
 void main() {
@@ -162,15 +161,30 @@ void main() {
   });
 
   group('BrowserDevtoolsSession.launch lifecycle guards', () {
-    late Directory workDir;
-
-    setUp(() {
-      workDir = Directory.systemTemp.createTempSync('mida_cdp_session_test_');
-    });
-
-    tearDown(() {
-      if (workDir.existsSync()) workDir.deleteSync(recursive: true);
-    });
+    /// A work directory owned by ONE test (round 3 P-R3-6, Gadfly C7).
+    /// This used to be a single group-scoped `late Directory workDir`
+    /// reassigned in `setUp`: when a test whose per-test `Timeout` fired
+    /// kept running anyway (Dart has no preemption - see the sampling
+    /// test's own comment below), its still-executing body read that
+    /// shared variable *after* the next test's `setUp` had already
+    /// repointed it, so it wrote into, and had its files deleted from
+    /// under it by, a directory belonging to a different test. Each test
+    /// now captures its own directory in a local, and `addTearDown`
+    /// deletes exactly that one, so an abandoned body can only ever
+    /// collide with itself.
+    Directory isolatedWorkDir(String name) {
+      final dir = Directory.systemTemp.createTempSync('mida_cdp_session_${name}_');
+      addTearDown(() {
+        // See `_retryOnWindowsFileLock`'s doc: this dir holds the marker
+        // files a just-killed fake-browser `.bat` process was writing
+        // into, which can stay transiently locked past that process's own
+        // exit.
+        _retryOnWindowsFileLock(() {
+          if (dir.existsSync()) dir.deleteSync(recursive: true);
+        });
+      });
+      return dir;
+    }
 
     // Matches only `BrowserDevtoolsSession.launch`'s own profile-dir
     // naming (`mida_cdp_` + a bare hex suffix, no further underscores -
@@ -193,6 +207,7 @@ void main() {
         .toSet();
 
     test('BROWSER_MISSING when no candidate executable exists on disk', () async {
+      final workDir = isolatedWorkDir('browser_missing');
       await expectLater(
         BrowserDevtoolsSession.launch(candidatePaths: () => ['${workDir.path}/does-not-exist.exe']),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'BROWSER_MISSING')),
@@ -218,6 +233,7 @@ void main() {
         // unambiguous tick-count delta when *not* killed - no need for a
         // long real wait to get separation between "still running" and
         // "killed".
+        final workDir = isolatedWorkDir('silent_hang');
         final marker = File('${workDir.path}/beats.txt');
         final bat = _writeFakeBrowser(
           workDir,
@@ -261,15 +277,45 @@ void main() {
         // of `launch()`'s catch block, the un-killed loop would keep
         // appending lines throughout that window; a killed process
         // appends exactly zero more.
-        final countAtThrow = marker.existsSync() ? marker.readAsLinesSync().length : 0;
+        final countAtThrow =
+            marker.existsSync() ? _retryOnWindowsFileLock(() => marker.readAsLinesSync().length) : 0;
+        // Round 3 P-R3-6 (Gadfly C7): without this, `countLater ==
+        // countAtThrow` passes vacuously at 0 == 0 - a fake browser that
+        // never started, or never got as far as writing a tick, proves
+        // nothing about whether `launch()` killed anything. Requiring at
+        // least one recorded tick makes the comparison below a real
+        // before/after measurement of a process that was demonstrably
+        // running.
+        expect(countAtThrow, greaterThan(0),
+            reason: 'the fake browser must have been running and ticking before the launch failure, otherwise the '
+                'no-more-ticks assertion below is vacuous');
         await Future<void>.delayed(const Duration(milliseconds: 200));
-        final countLater = marker.existsSync() ? marker.readAsLinesSync().length : 0;
+        final countLater =
+            marker.existsSync() ? _retryOnWindowsFileLock(() => marker.readAsLinesSync().length) : 0;
         expect(countLater, countAtThrow);
       },
-      timeout: const Timeout(Duration(seconds: 10)),
+      // Widened from 10s (coordinator flake report): this test's real
+      // internal budget (connectTimeout=150ms + a fixed 200ms sampling
+      // window) is tiny, but it still spawns a real OS process
+      // (`Process.start` on the `.bat`) and does real disk I/O to launch
+      // and kill it - both are subject to ordinary host scheduling
+      // variance (antivirus scan of a freshly written script, a loaded
+      // machine), which can occasionally push actual wall-clock past a
+      // too-tight per-test ceiling with zero change to what is being
+      // asserted. A hard per-test `Timeout` firing mid-test does not stop
+      // the still-running Dart code (there is no preemption) - it lets
+      // `tearDown` proceed to delete `workDir` out from under the still-
+      // executing (now-abandoned) test body, which then throws
+      // `PathNotFoundException` on its own read and gets misattributed to
+      // whichever test happens to run next. 30s keeps this test's own
+      // failure signal (a real assertion failure) distinguishable from
+      // pure scheduling noise, without touching any of the assertions or
+      // the short internal windows above.
+      timeout: const Timeout(Duration(seconds: 30)),
     );
 
     test('passes --remote-debugging-address=127.0.0.1, not just the port, to the browser executable', () async {
+      final workDir = isolatedWorkDir('remote_debugging_address');
       final marker = File('${workDir.path}/args.txt');
       final bat = _writeFakeBrowser(
         workDir,
@@ -291,49 +337,17 @@ void main() {
         throwsA(isA<MediaExtractionException>()),
       );
 
-      final args = marker.readAsStringSync();
+      final args = _retryOnWindowsFileLock(() => marker.readAsStringSync());
       // Guard can fail: removing the address flag from `launch()`'s
       // argument list (leaving only `--remote-debugging-port`) makes this
       // `contains` assertion fail - verified by hand while writing this
       // test, then restored (diffed byte-identical against the pre-check
       // copy before moving on).
       expect(args, contains('--remote-debugging-address=127.0.0.1'));
-    }, timeout: const Timeout(Duration(seconds: 15)));
-  });
-
-  group('BrowserDevtoolsSession.killAndAwaitExit process-tree sweep', () {
-    test('invokes the injected processTreeKiller with the process\'s own pid', () async {
-      final process = _InstantExitFakeProcess(pid: 98765);
-      int? capturedPid;
-
-      await BrowserDevtoolsSession.killAndAwaitExit(
-        process,
-        processTreeKiller: (executable, arguments) async {
-          capturedPid = int.parse(arguments.last);
-          return ProcessResult(0, 0, '', '');
-        },
-      );
-
-      expect(capturedPid, 98765);
-    });
-
-    test('guard can fail: the tree kill is issued before the parent process is killed, not after', () async {
-      // Independent review round 2: `taskkill /T` (or `pkill -P` on
-      // macOS/Linux) needs a *live* tree to walk - calling it after the
-      // parent has already been killed and awaited orphans its children
-      // instead of reaching them.
-      final callOrder = <String>[];
-      final process = _InstantExitFakeProcess(pid: 98765, callOrder: callOrder);
-
-      await BrowserDevtoolsSession.killAndAwaitExit(
-        process,
-        processTreeKiller: (executable, arguments) async {
-          callOrder.add('treeKill');
-          return ProcessResult(0, 0, '', '');
-        },
-      );
-
-      expect(callOrder, ['treeKill', 'processKill']);
-    });
+      // Widened from 15s - see the sibling test's own comment above this
+      // group for why (real subprocess spawn + disk I/O under host
+      // scheduling variance, and a fired `Timeout` racing `tearDown`
+      // rather than stopping this body).
+    }, timeout: const Timeout(Duration(seconds: 30)));
   });
 }

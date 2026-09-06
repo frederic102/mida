@@ -10,6 +10,7 @@ class _FixedResponseServer {
   final HttpServer server;
   int statusCode = 200;
   String body = '';
+  List<String> setCookieHeaders = const [];
 
   _FixedResponseServer(this.server);
 
@@ -24,6 +25,9 @@ class _FixedResponseServer {
 
   Future<void> _handle(HttpRequest request) async {
     request.response.statusCode = statusCode;
+    for (final header in setCookieHeaders) {
+      request.response.headers.add(HttpHeaders.setCookieHeader, header);
+    }
     request.response.write(body);
     await request.response.close();
   }
@@ -77,6 +81,39 @@ void main() {
       expect(info.title, 'Example Niconico Video');
       expect(info.formats.single.url, 'https://dmc.nico/example/master.m3u8');
       expect(info.formats.single.container, 'm3u8');
+      expect(info.requestHeaders['Referer'], 'https://www.nicovideo.jp/');
+    });
+
+    test('forwards a Set-Cookie from the DMC session response into cookiesByDomain (N2)', () async {
+      // Guard-can-fail: if NiconicoExtractor stops threading
+      // NiconicoDmcSessionClient's cookiesByDomain through into the
+      // returned MediaInfo, this map comes back empty and the media
+      // playlist would 403 downstream exactly as `docs/plan-phase6-av-
+      // pairing.md`'s reproduction recorded.
+      pageServer.body = await File('test/fixtures/niconico_watch_data.html').readAsString();
+      sessionServer.body = jsonEncode({
+        'data': {
+          'session': {'content_uri': 'https://dmc.nico/example/master.m3u8'},
+        },
+      });
+      // Domain matches the session server's own response host (127.0.0.1,
+      // per `_FixedResponseServer.baseUri` above) - phase 6 round 2 (S-R6)
+      // now rejects a `Set-Cookie` Domain that does not domain-match the
+      // host that actually sent it (see
+      // `niconico_dmc_session_client_test.dart`'s own S-R6 coverage for
+      // the rejection case itself), so this forwarding test has to use a
+      // domain the fixture server can legitimately claim.
+      sessionServer.setCookieHeaders = ['domand_bid=abc123; Domain=127.0.0.1; Path=/; Secure'];
+
+      final info = await buildExtractor().extract(Uri.parse('https://www.nicovideo.jp/watch/sm9'));
+
+      // Phase 6 round 3 (S-R3-1): a cookie that carried an explicit
+      // `Domain` is filed under the leading-dot key `CookieScope` reads
+      // as "domain cookie".
+      final cookies = info.cookiesByDomain['.127.0.0.1'];
+      expect(cookies, isNotNull);
+      expect(cookies!.single.name, 'domand_bid');
+      expect(cookies.single.value, 'abc123');
     });
 
     test('throws PARSE_ERROR when the page has no watch data (current site shape)', () async {

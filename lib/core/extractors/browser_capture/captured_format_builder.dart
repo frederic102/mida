@@ -1,8 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import '../../net/host_policy.dart';
-import '../generic/hls_playlist_parser.dart';
+import '../generic/hls_master_format_mapper.dart';
 import '../media_models.dart';
 import 'captured_media_classifier.dart';
 import 'format_capabilities.dart';
@@ -32,19 +33,37 @@ class CapturedFormatBuilder {
     this.allowPrivateHosts = false,
   }) : _httpClientFactory = httpClientFactory ?? HttpClient.new;
 
-  static final RegExp _streamInfPattern = RegExp(r'^#EXT-X-STREAM-INF:(.*)$', caseSensitive: false);
-  static final RegExp _codecsAttrPattern = RegExp(r'''CODECS="([^"]*)"''', caseSensitive: false);
-
   /// Turns one candidate into one or more [MediaFormat]s. An `m3u8` URL is
   /// fetched (with the same headers the page's requests carried) and, if
-  /// it is a master playlist, expanded into one format per
-  /// `#EXT-X-STREAM-INF` variant, matching the generic extractor's format
-  /// model; everything else (media-playlist `m3u8`, `mpd`, `mp4`, `webm`)
-  /// is exposed as a single format.
+  /// it is a master playlist, expanded via [HlsMasterFormatMapper] - one
+  /// format per `#EXT-X-STREAM-INF` variant (video-only + a paired
+  /// audio-only format when the master splits audio into its own
+  /// `#EXT-X-MEDIA` rendition group, muxed otherwise), matching the generic
+  /// extractor's format model; everything else (media-playlist `m3u8`,
+  /// `mpd`, `mp4`, `webm`) is exposed as a single format.
   Future<List<MediaFormat>> expandFormats(CapturedMediaCandidate candidate, Map<String, String> headers) async {
     final directCaps = FormatCapabilities.fromMimeType(candidate.mimeType);
     if (candidate.container != 'm3u8') {
-      return [_formatFor(id: candidate.url, url: candidate.url, container: candidate.container, caps: directCaps)];
+      // `capabilitiesUnknown` only when [directCaps] is itself an
+      // unconfirmed guess (the container's own mimeType said nothing
+      // decisive) - phase 6 P3: this is the selector
+      // `FormatCapabilityResolver` uses to decide which mp4/m4a candidates
+      // are worth an ffprobe-by-bytes sniff. Round 2 P-R7 (Vigil#2): `m4a`
+      // belongs in this list too - a direct `.m4a` candidate with no
+      // decisive mimeType is exactly as unconfirmed as an `.mp4`/`.webm`
+      // one (its `FormatCapabilities.fromMimeType` default is still the
+      // safe muxed guess, which is wrong for almost every real m4a).
+      final capsUnknown = (candidate.container == 'mp4' || candidate.container == 'webm' || candidate.container == 'm4a') &&
+          !(candidate.mimeType?.toLowerCase().startsWith('audio/') ?? false);
+      return [
+        _formatFor(
+          id: candidate.url,
+          url: candidate.url,
+          container: candidate.container,
+          caps: directCaps,
+          capabilitiesUnknown: capsUnknown,
+        ),
+      ];
     }
 
     String playlistText;
@@ -60,42 +79,20 @@ class CapturedFormatBuilder {
       return [_formatFor(id: candidate.url, url: candidate.url, container: 'm3u8', caps: directCaps)];
     }
 
-    final variants = HlsPlaylistParser.parseMasterVariants(playlistText, Uri.parse(candidate.url));
-    if (variants.isEmpty) {
+    final mapped = HlsMasterFormatMapper.formatsFor(candidate.url, playlistText, defaultCaps: directCaps);
+    if (mapped.isEmpty) {
       return [_formatFor(id: candidate.url, url: candidate.url, container: 'm3u8', caps: directCaps)];
     }
-
-    final codecsByVariant = _variantCodecsInOrder(playlistText);
-    return [
-      for (var i = 0; i < variants.length; i++)
-        _formatFor(
-          id: '${candidate.url}#$i',
-          url: variants[i].url,
-          container: 'm3u8',
-          width: variants[i].width,
-          height: variants[i].height,
-          bitrate: variants[i].bandwidth,
-          caps: FormatCapabilities.fromHlsCodecs(i < codecsByVariant.length ? codecsByVariant[i] : null),
-        ),
-    ];
+    return mapped;
   }
 
-  /// Extracts each `#EXT-X-STREAM-INF` line's `CODECS="..."` attribute, in
-  /// the same top-to-bottom order `HlsPlaylistParser.parseMasterVariants`
-  /// produces its variant list, so index i here lines up with variant i
-  /// there. `HlsPlaylistParser` does not expose this attribute itself
-  /// (left unedited per this phase's file-ownership rule); this is a
-  /// narrow, independent second pass over the same text for the one field
-  /// it lacks; both walks agree on what counts as a variant line.
-  List<String?> _variantCodecsInOrder(String playlistText) {
-    final codecsByVariant = <String?>[];
-    for (final line in playlistText.split(RegExp(r'\r?\n'))) {
-      final match = _streamInfPattern.firstMatch(line.trim());
-      if (match == null) continue;
-      codecsByVariant.add(_codecsAttrPattern.firstMatch(match.group(1)!)?.group(1));
-    }
-    return codecsByVariant;
-  }
+  /// Round 2 P-R6 (Codex#18): caps how much of a manifest response this
+  /// fetch ever holds in memory. A real HLS master/media playlist is plain
+  /// text and always well under this; the cap exists for whatever a
+  /// misbehaving/attacker-controlled endpoint decides to send in its place
+  /// (unbounded body would otherwise buffer entirely before this method
+  /// ever got a chance to look at it).
+  static const int _maxManifestBytes = 1024 * 1024;
 
   Future<String> _fetchText(Uri url, Map<String, String> headers) async {
     final client = _httpClientFactory();
@@ -107,7 +104,7 @@ class CapturedFormatBuilder {
         allowPrivateHosts: allowPrivateHosts,
         configureRequest: (request) => headers.forEach(request.headers.set),
       );
-      final bytes = await response.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+      final bytes = await _readBounded(client, response);
       try {
         return utf8.decode(bytes);
       } on FormatException {
@@ -118,6 +115,39 @@ class CapturedFormatBuilder {
     }
   }
 
+  /// Streams [response] into memory up to [_maxManifestBytes]. The moment
+  /// that cap would be crossed, the subscription is cancelled and [client]
+  /// is force-closed right there - not after draining the rest of the body
+  /// first - so an oversized response stops costing bytes/sockets the
+  /// instant it is detected, rather than being read to completion and
+  /// merely truncated afterward.
+  Future<List<int>> _readBounded(HttpClient client, HttpClientResponse response) async {
+    final bytes = <int>[];
+    final completer = Completer<void>();
+    late final StreamSubscription<List<int>> subscription;
+    subscription = response.listen(
+      (chunk) {
+        final remaining = _maxManifestBytes - bytes.length;
+        if (remaining <= 0) return; // already at cap; any further chunk is dropped
+        bytes.addAll(remaining >= chunk.length ? chunk : chunk.sublist(0, remaining));
+        if (bytes.length >= _maxManifestBytes) {
+          subscription.cancel();
+          client.close(force: true);
+          if (!completer.isCompleted) completer.complete();
+        }
+      },
+      onDone: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!completer.isCompleted) completer.completeError(error, stackTrace);
+      },
+      cancelOnError: true,
+    );
+    await completer.future;
+    return bytes;
+  }
+
   MediaFormat _formatFor({
     required String id,
     required String url,
@@ -126,6 +156,7 @@ class CapturedFormatBuilder {
     int? height,
     int? bitrate,
     FormatCapabilities caps = FormatCapabilities.muxed,
+    bool capabilitiesUnknown = false,
   }) {
     return MediaFormat(
       id: id,
@@ -136,6 +167,7 @@ class CapturedFormatBuilder {
       bitrate: bitrate ?? 0,
       hasVideo: caps.hasVideo,
       hasAudio: caps.hasAudio,
+      capabilitiesUnknown: capabilitiesUnknown,
     );
   }
 }

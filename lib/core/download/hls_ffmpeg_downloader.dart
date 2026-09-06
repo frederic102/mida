@@ -5,26 +5,13 @@ import 'package:flutter/foundation.dart';
 
 import '../extractors/media_models.dart';
 import '../net/cookie_scope.dart';
+import '../net/per_hop_credentials.dart';
 import '../services/ffmpeg_locator.dart';
+import 'hls_ffmpeg_args.dart';
 import 'manifest_reference_scanner.dart';
 import 'media_merger.dart';
 
-/// Thrown by [HlsFfmpegDownloader.buildArgs] when a header name or value
-/// carries a CR or LF: passed through unchecked, either could break out of
-/// the intended `-headers`/`-user_agent` value and inject an arbitrary
-/// extra HTTP header (or, depending on how ffmpeg's arg splitting treats
-/// the resulting string, additional ffmpeg options) into the request
-/// ffmpeg sends to fetch the manifest/segments. Header values here often
-/// come from a remote page's own response (`Set-Cookie`, `Referer` chains
-/// forwarded by `BrowserCaptureExtractor`), so they are attacker
-/// influenced, not just our own code's literals.
-class HeaderInjectionException implements Exception {
-  final String message;
-  const HeaderInjectionException(this.message);
-
-  @override
-  String toString() => 'HeaderInjectionException: $message';
-}
+export 'hls_ffmpeg_args.dart' show HeaderInjectionException;
 
 /// Downloads an HLS (`MediaFormat.protocol == 'hls'`) or DASH (`'dash'`)
 /// format directly through ffmpeg, which reads the manifest and remuxes the
@@ -34,10 +21,9 @@ class HeaderInjectionException implements Exception {
 /// `-user_agent`/`-headers` carry the format's request headers, `-c copy`
 /// keeps the original codecs, and `-bsf:a aac_adtstoasc` remuxes the ADTS
 /// AAC audio HLS segments carry into the ASC framing an mp4-family
-/// container expects - only applied when [outputPath]'s extension is
-/// actually mp4-family ([_mp4FamilyContainers]); a webm/mkv output does not
-/// need or want it (a non-AAC HLS/DASH source is still out of scope for
-/// this pass, see `docs/plan-phase2b-wiring.md` follow-ups).
+/// container expects. The argument building itself lives in
+/// [HlsFfmpegArgs]; this class owns the pre-flight manifest scan, the
+/// credential decisions that scan informs, and the process run.
 class HlsFfmpegDownloader {
   final Future<String> Function() _ffmpegPathResolver;
   final ManifestReferenceScanner _scanner;
@@ -67,83 +53,28 @@ class HlsFfmpegDownloader {
   })  : _ffmpegPathResolver = ffmpegPathResolver ?? FfmpegLocator.ffmpegPath,
         _scanner = scanner ?? ManifestReferenceScanner(httpClientFactory: httpClientFactory);
 
-  static const _mp4FamilyContainers = {'mp4', 'm4a', 'mov'};
-
-  /// Every other control character besides CR/LF (which
-  /// [_sanitizeHeader] rejects outright): stripped rather than rejected,
-  /// since these cannot break out of the header block the way CR/LF can,
-  /// but still have no legitimate place in an HTTP header.
-  static final _otherControlChars = RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]');
-
   /// Pure argument builder (unit tested without a real ffmpeg binary).
-  /// [audioOnly] switches from `-c copy` (keep both streams as-is) to
-  /// `-vn` + an explicit audio codec (for an audio-only download request,
-  /// including the "extract audio from a muxed/HLS source because no
-  /// dedicated audio-only stream exists" fallback -
-  /// `FormatSelector.needsAudioExtraction`). `-protocol_whitelist` locks
-  /// ffmpeg's demuxer down to `https,tcp,tls,crypto` (plus `http` only
-  /// when [url] itself is a plain-http manifest - never unconditionally,
-  /// so an https manifest cannot have a referenced segment silently
-  /// downgrade the connection) - never `file`/`concat`/`subfile`, so a
-  /// malicious manifest cannot redirect a referenced segment through
-  /// those to read or assemble local files. Does not itself verify the
-  /// manifest or what it references resolve to an allowed host - callers
-  /// must go through [downloadVerified], not `buildArgs`+`run` directly,
-  /// for that.
+  /// Delegates to [HlsFfmpegArgs.build]; kept as an instance method
+  /// because every existing caller and test reaches it through a
+  /// downloader instance.
   List<String> buildArgs({
     required String url,
     required String outputPath,
     Map<String, String> headers = const {},
     bool audioOnly = false,
     List<String> audioCodecArgs = const ['-c:a', 'aac'],
-  }) {
-    final scheme = Uri.tryParse(url)?.scheme.toLowerCase();
-    final allowedProtocols = ['https', 'tcp', 'tls', 'crypto'];
-    if (scheme == 'http') {
-      allowedProtocols.insert(0, 'http');
-      debugPrint('HlsFfmpegDownloader: manifest URL is plain http; allowing "http" in -protocol_whitelist: $url');
-    }
-    final args = <String>['-y', '-protocol_whitelist', allowedProtocols.join(',')];
-
-    final userAgent = headers['User-Agent'];
-    if (userAgent != null) args.addAll(['-user_agent', _sanitizeHeader('User-Agent', userAgent)]);
-
-    final headerLines = headers.entries
-        .where((e) => e.key.toLowerCase() != 'user-agent')
-        .map((e) => '${_sanitizeHeader('header name', e.key)}: ${_sanitizeHeader(e.key, e.value)}')
-        .join('\r\n');
-    if (headerLines.isNotEmpty) args.addAll(['-headers', '$headerLines\r\n']);
-
-    args.addAll(['-i', url]);
-    if (audioOnly) {
-      args.addAll(['-vn', ...audioCodecArgs]);
-    } else {
-      args.addAll(['-c', 'copy']);
-      if (_mp4FamilyContainers.contains(_extensionOf(outputPath))) {
-        args.addAll(['-bsf:a', 'aac_adtstoasc']);
-      }
-    }
-    args.addAll(['-progress', 'pipe:1', '-nostats', '-loglevel', 'error', outputPath]);
-    return args;
-  }
-
-  /// Rejects a header [label]'s [value] outright if it contains a CR or
-  /// LF (would break out of the intended header line entirely), and
-  /// strips any other control character (has no legitimate use in a
-  /// header but cannot by itself inject a new one).
-  static String _sanitizeHeader(String label, String value) {
-    if (value.contains('\r') || value.contains('\n')) {
-      throw HeaderInjectionException(
-        'Refusing header "$label": its value contains a CR or LF, which could inject an extra header.',
+    String? sourceAudioCodec,
+    bool? segmentsAreTransportStream,
+  }) =>
+      HlsFfmpegArgs.build(
+        url: url,
+        outputPath: outputPath,
+        headers: headers,
+        audioOnly: audioOnly,
+        audioCodecArgs: audioCodecArgs,
+        sourceAudioCodec: sourceAudioCodec,
+        segmentsAreTransportStream: segmentsAreTransportStream,
       );
-    }
-    return value.replaceAll(_otherControlChars, '');
-  }
-
-  static String _extensionOf(String path) {
-    final dot = path.lastIndexOf('.');
-    return dot == -1 || dot == path.length - 1 ? '' : path.substring(dot + 1).toLowerCase();
-  }
 
   /// Verifies [url] and everything it (as a manifest) references resolve
   /// to an allowed host, builds ffmpeg's args, and runs it - the entry
@@ -153,7 +84,15 @@ class HlsFfmpegDownloader {
   /// the check possible at all: ffmpeg has no concept of "refuse to
   /// follow a reference to a private host", so by the time ffmpeg itself
   /// opened a bad segment URL it would already be too late.
-  Future<void> downloadVerified({
+  ///
+  /// Returns the duration the manifest chain DECLARED (phase 6 B-R3-7):
+  /// the `#EXTINF` sum of the first media playlist that carries one, or
+  /// the MPD's `mediaPresentationDuration`, and null when the manifest
+  /// said nothing. The caller passes it to `DownloadOutcomeVerifier` as
+  /// the expected duration when the format list has none of its own,
+  /// which is what catches a download that ffmpeg truncated but still
+  /// exited 0 on.
+  Future<Duration?> downloadVerified({
     required String url,
     required String outputPath,
     Map<String, String> headers = const {},
@@ -162,16 +101,84 @@ class HlsFfmpegDownloader {
     Duration? totalDuration,
     void Function(double progress)? onProgress,
     Map<String, List<CookieEntry>>? cookiesByDomain,
+    String? sourceAudioCodec,
+    bool? segmentsAreTransportStream,
+    Duration? processTimeout,
+    // Phase 6 B-R4-8 (Gadfly round 3): a caller (eventually the pipeline -
+    // wiring that call site is a follow-up, not this lane's fence) can
+    // learn a credential got stripped from what ffmpeg receives without
+    // scraping debug logs. Optional and defaulted to null so no existing
+    // caller is affected.
+    void Function(String message)? onStatus,
   }) async {
-    await _assertManifestSafe(url, headers);
+    // Computed once and used for the manifest scan (phase 6 fix): the
+    // scan used to run against the raw, unscoped [headers] only, so an
+    // authenticated manifest requiring a domain-scoped cookie 403'd
+    // during the scan even though the *download* right after it - which
+    // already received the scoped cookie - would have succeeded and
+    // reached real, possibly-unsafe segment references ffmpeg would then
+    // follow unchecked.
+    final scopedHeaders = _withScopedCookie(url, headers, cookiesByDomain);
+    final scan = await _assertManifestSafe(url, scopedHeaders, cookiesByDomain);
     final args = buildArgs(
       url: url,
       outputPath: outputPath,
-      headers: _withScopedCookie(url, headers, cookiesByDomain),
+      headers: _headersForFfmpeg(scopedHeaders, scan, onStatus),
       audioOnly: audioOnly,
       audioCodecArgs: audioCodecArgs,
+      sourceAudioCodec: sourceAudioCodec,
+      // Phase 6 B-R4: a caller that knows the answer still wins; when it
+      // does not (null - the common case, since a format's segment shape
+      // is not visible from the format list), the scan we just did
+      // already read the media playlists and can say. Only a manifest
+      // that carried no signal at all falls through to buildArgs'
+      // pre-phase-6 default.
+      segmentsAreTransportStream: segmentsAreTransportStream ?? scan.segmentsAreTransportStream,
     );
-    await run(args, totalDuration: totalDuration, onProgress: onProgress);
+    await run(args, totalDuration: totalDuration, onProgress: onProgress, processTimeout: processTimeout);
+    return scan.declaredDuration;
+  }
+
+  /// Phase 6 B-R3-5, extended by B-R4-3. ffmpeg applies one `-headers`
+  /// blob to the manifest AND to every segment, key, init map, rendition
+  /// playlist and redirect hop it goes through, so any credential in that
+  /// blob reaches every host the manifest touches. When the scan found a
+  /// reference or redirect hop outside that credential's own scope,
+  /// [PerHopCredentials.isCredentialHeader] decides what gets removed from
+  /// what ffmpeg gets: not just `Cookie` (a session cookie) but also
+  /// `Authorization` and `Proxy-Authorization` (a bearer/basic token or
+  /// proxy credential, each just as capable of authenticating this app's
+  /// own session to an attacker-controlled host as a cookie is) - the
+  /// download proceeds without them rather than being refused.
+  ///
+  /// Why this replaced the refusal: streams whose segments legitimately
+  /// live on a partner CDN were being blocked outright, and dropping the
+  /// credential closes the leak just as completely. If the manifest
+  /// genuinely needed a credential on those hosts, ffmpeg now fails
+  /// honestly on a 401/403 instead of this app pretending the content is
+  /// unsupported. The scanner's own manifest request keeps every
+  /// credential (it is per-host scoped there), so the scan still sees the
+  /// real manifest rather than a login wall.
+  Map<String, String> _headersForFfmpeg(
+    Map<String, String> headers,
+    ManifestScanResult scan,
+    void Function(String message)? onStatus,
+  ) {
+    if (scan.hostsOutsideCookieScope.isEmpty) return headers;
+    final withoutCredentials = Map<String, String>.from(headers)
+      ..removeWhere((name, _) => PerHopCredentials.isCredentialHeader(name));
+    if (withoutCredentials.length == headers.length) return headers;
+    final message =
+        'HlsFfmpegDownloader: not sending your session credentials to ffmpeg for this download. This manifest '
+        'references ${scan.hostsOutsideCookieScope.join(', ')}, which they do not belong to, and ffmpeg applies '
+        'the same Cookie/Authorization headers to every host a manifest points at. If the download now fails '
+        'with a 401/403, this source needs a credential on those hosts and cannot be fetched safely this way.';
+    // B-R4-8: reported through the caller-supplied channel, not only the
+    // debug log, so a UI can surface it to the person who started this
+    // download instead of it being visible only in a console nobody reads.
+    onStatus?.call(message);
+    debugPrint(message);
+    return withoutCredentials;
   }
 
   /// ffmpeg's own `-headers` applies identically to every request it makes
@@ -181,7 +188,9 @@ class HlsFfmpegDownloader {
   /// not the full per-request scoping `StreamDownloader` can do: it still
   /// stops a cookie for a *different, unrelated* domain in
   /// [cookiesByDomain] from riding along onto this manifest's own request,
-  /// which a flattened header would not have stopped.
+  /// which a flattened header would not have stopped. [_headersForFfmpeg]
+  /// then removes even this cookie when the scan proved the manifest
+  /// points outside its scope.
   Map<String, String> _withScopedCookie(
     String url,
     Map<String, String> headers,
@@ -196,17 +205,24 @@ class HlsFfmpegDownloader {
 
   /// Delegates the actual fetch-and-check work to
   /// [ManifestReferenceScanner]: fetches [url] (honoring
-  /// [allowPrivateHosts] for that one hop only), and - for an HLS master
-  /// playlist - recurses one level into each variant playlist too,
-  /// host-checking every reference it finds (segments, encryption keys,
-  /// init segments/maps, alternate renditions, DASH `BaseURL`/
-  /// `SegmentTemplate`/`ContentProtection`, ...) before this method
-  /// returns successfully.
-  Future<void> _assertManifestSafe(String url, Map<String, String> headers) async {
-    await _scanner.scanAndCheck(
+  /// [allowPrivateHosts] only for the manifest's own origin), walks every
+  /// playlist it chains into (variants, `#EXT-X-MEDIA` renditions, nested
+  /// masters) within a bounded queue and a whole-scan deadline, and
+  /// host-checks every reference it finds (segments, encryption keys,
+  /// init segments/maps, DASH `BaseURL`/`SegmentTemplate`/
+  /// `ContentProtection`, ...) before this method returns.
+  /// [cookiesByDomain] is handed down so the scanner can also report
+  /// references outside the scope of the cookie [headers] carries.
+  Future<ManifestScanResult> _assertManifestSafe(
+    String url,
+    Map<String, String> headers,
+    Map<String, List<CookieEntry>>? cookiesByDomain,
+  ) {
+    return _scanner.scanAndCheck(
       Uri.parse(url),
       headers,
       allowPrivateHosts: allowPrivateHosts,
+      cookiesByDomain: cookiesByDomain,
       resolveHost: resolveHost,
     );
   }

@@ -244,7 +244,13 @@ void main() {
         outputDir: outDir.path,
         onStatus: statuses.add,
       ),
-      throwsA(isA<AllFormatCandidatesFailedException>()),
+      throwsA(isA<AllFormatCandidatesFailedException>().having(
+        (e) => e.toString(),
+        'message',
+        contains('missing its audio track'),
+      )),
+      reason: 'Gadfly round 3 #4: the exception TYPE alone does not pin the contract; the loud failure must '
+          'name the missing audio track so a future edit cannot change the reason without going red',
     );
     expect(statuses, isNot(contains('ffprobe confirms the source has no audio track.')));
   });

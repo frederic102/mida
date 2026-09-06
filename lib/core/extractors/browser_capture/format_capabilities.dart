@@ -41,4 +41,27 @@ class FormatCapabilities {
     if (!hasVideo && !hasAudio) return muxed;
     return FormatCapabilities(hasVideo: hasVideo, hasAudio: hasAudio);
   }
+
+  /// The first `CODECS="..."` entry naming a recognized video fourcc
+  /// (verbatim, e.g. `avc1.4d401f`, not just the matched prefix), or null
+  /// when [codecsAttribute] is absent or names no video codec. Used to
+  /// populate [MediaFormat.videoCodec] for an HLS variant so
+  /// `FormatSelector`'s strict adaptive-pair tier (which requires a
+  /// non-null codec starting with `avc1`/`hvc1`/`av01`/... to consider a
+  /// pairing "natively compatible") can actually match one - phase 6
+  /// (`docs/plan-phase6-av-pairing.md`) trap 1.
+  static String? videoCodecFrom(String? codecsAttribute) => _firstMatching(codecsAttribute, _videoCodecPrefixes);
+
+  /// Same as [videoCodecFrom] but for an audio fourcc
+  /// (`mp4a`/`ac-3`/`ec-3`/`opus`/`vorbis`/`flac`/`alac`).
+  static String? audioCodecFrom(String? codecsAttribute) => _firstMatching(codecsAttribute, _audioCodecPrefixes);
+
+  static String? _firstMatching(String? codecsAttribute, List<String> prefixes) {
+    if (codecsAttribute == null || codecsAttribute.trim().isEmpty) return null;
+    for (final part in codecsAttribute.split(',').map((c) => c.trim())) {
+      if (part.isEmpty) continue;
+      if (prefixes.any((p) => part.toLowerCase().startsWith(p))) return part;
+    }
+    return null;
+  }
 }
