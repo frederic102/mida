@@ -1,11 +1,11 @@
 [Setup]
 AppName=MiDa
-AppVersion=2.2.0
+AppVersion=2.3.0
 AppPublisher=frederic102
 DefaultDirName={autopf}\MiDa
 DefaultGroupName=MiDa
 OutputDir=dist\windows
-OutputBaseFilename=MiDa_Setup_v2.2.0
+OutputBaseFilename=MiDa_Setup_v2.3.0
 Compression=lzma
 SolidCompression=yes
 UninstallDisplayIcon={app}\MiDa.exe

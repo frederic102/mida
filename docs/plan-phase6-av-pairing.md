@@ -412,3 +412,16 @@ stsd entry_count 0 픽스처는 후속). Chair: 라운드 3 의 필수 후속이
 SHIP** (커밋). 릴리스 태그는 32사이트 라이브 게이트 (브라우저 캡처, 유저 승인 필요) 재실행 후.
 잔여 후속 (비차단): 스니퍼 데드라인 no-body 서버 테스트, stsd entry_count=0 픽스처, 취소 중 경로 테스트,
 중복 format id 테스트, 화면 3개 400줄 초과 분리, vimeo 레인지 조각 원인, twitch 파서 매퍼 통일.
+
+## 후속 라운드 (2026-09-06 19:00~, "다 해" 오더)
+- Lane V: 네이티브 Vimeo 추출기 (`lib/core/extractors/vimeo/`, 2파일 + 테스트 13). 레지스트리 등록 (리드).
+  라이브 확인 불가: 이 PC IP 가 Vimeo/Cloudflare 에 차단됨 (`x-banned-ip`). 문서화된 config 스키마 기반.
+- Lane U: 화면 3개 (903/711/688) -> 21파일, 최대 267줄, 동작 변경 없음, features 테스트 64 그린.
+- Lane T: T1 스니퍼 데드라인 테스트 + settled 가드, T2 stsd entry_count=0, T4 중복 id 테스트 3종 완료.
+  T5 트위치 통일은 미이관 (매퍼가 NAME/FRAME-RATE 를 안 읽어 fps/id 가 바뀜, 매퍼 doc 에 근거 기록).
+  T3 취소 테스트: 파이프라인에 CancelToken 배선 자체가 없음 -> 후속 (시그니처 설계 필요).
+  레인은 최종 실행 "285 passed" 직후 sonnet 한도 (00:30 리셋) 로 종료, flip 잔재 0.
+- 32사이트 라이브 게이트: 하네스 분류기가 브라우저 실행 명령을 차단. 유저 직접 실행 또는 허용 필요.
+- 버전 2.3.0+6, installer.iss 2.3.0, CHANGELOG 2.3.0 작성.
+- 최종 이음새 (20:15): analyze 에러 0 (info 70). core/download 285, features 64, core/extractors 684,
+  core/services 60, core/net 70, core/utils 76 = **1239 그린**. 리포 전체 400줄 초과 파일 0.

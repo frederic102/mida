@@ -102,9 +102,18 @@ class Mp4TrackSniffer {
       settled = true;
       final sub = subscription;
       subscription = null;
-      if (sub != null) await sub.cancel();
+      // Force-close FIRST (Codex final #10): the socket is torn down even
+      // if the subscription's own cancel throws or never completes, and
+      // the completer is guaranteed to resolve in the finally so a caller
+      // can never be left waiting on a sniff that already gave up.
       client.close(force: true);
-      if (!completer.isCompleted) completer.complete(value);
+      try {
+        if (sub != null) await sub.cancel();
+      } catch (_) {
+        // Teardown errors are not a sniff result.
+      } finally {
+        if (!completer.isCompleted) completer.complete(value);
+      }
     }
 
     final deadlineTimer = Timer(timeout, () => settle(null));
@@ -142,6 +151,16 @@ class Mp4TrackSniffer {
           await settle(null);
           return;
         }
+
+        // Residual follow-up (Vigil round 4 #2, docs/plan-phase6-av-pairing.md
+        // "라운드 4 판결"): the deadline Timer can fire during either await
+        // above (`HostPolicy.guardedRequest`, or simply while this isolate
+        // was busy elsewhere before reaching this line) just as easily as
+        // during the read itself - checked again right here, before
+        // `_readWindow` ever installs a fresh listener on [response], so a
+        // timeout that already force-closed [client] cannot still hand a
+        // new subscription to a connection that is already gone.
+        if (settled) return;
 
         final bytes = await _readWindow(response, (sub) => subscription = sub);
         if (settled) return; // the deadline already fired while we were reading

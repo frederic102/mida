@@ -10,6 +10,7 @@ import 'media_extractor.dart';
 import 'naver/naver_extractor.dart';
 import 'niconico/niconico_extractor.dart';
 import 'odysee/odysee_extractor.dart';
+import 'vimeo/vimeo_extractor.dart';
 import 'reddit/reddit_extractor.dart';
 import 'soundcloud/soundcloud_extractor.dart';
 import 'tiktok/tiktok_extractor.dart';
@@ -63,6 +64,7 @@ ExtractorRegistry buildExtractorRegistry({bool useBrowserLoginSession = false}) 
       DouyinExtractor(),
       NiconicoExtractor(),
       OdyseeExtractor(),
+      VimeoExtractor(),
       GenericExtractor(useBrowserLoginSession: useBrowserLoginSession),
     ],
     fallbacks: [BrowserCaptureExtractor(useBrowserLoginSession: useBrowserLoginSession)],

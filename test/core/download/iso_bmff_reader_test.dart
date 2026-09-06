@@ -305,5 +305,33 @@ void main() {
         expect(info?.audioCodec, 'ec-3');
       });
     });
+
+    group('stsd entry_count == 0 (round 4 residual follow-up)', () {
+      test(
+        'a video trak whose stsd declares zero entries reports no codec, even though a real sample entry '
+        'sits right after the entry_count field',
+        () {
+          final bytes = withStsdEntryCountZeroed(
+            buildFmp4Init(videoFourCc: 'avc1', audioFourCc: null, width: 1280, height: 720),
+            trakIndex: 0,
+          );
+
+          final info = IsoBmffReader.parse(bytes);
+
+          expect(info, isNotNull, reason: 'hasVideo/dims must still come through - only the codec is unknown');
+          expect(info!.hasVideo, isTrue);
+          expect(info.width, 1280);
+          expect(info.height, 720);
+          // Guard-can-fail (manually verified, see report): reverting
+          // `_findStsdFourCc` to skip straight past `entry_count` without
+          // ever reading its value (i.e. always trying to read a sample
+          // entry as long as some box-shaped bytes follow) makes this
+          // assertion fail - it comes back 'avc1', the real sample entry
+          // bytes this fixture deliberately still has sitting right there,
+          // even though entry_count itself says there are none.
+          expect(info.videoCodec, isNull);
+        },
+      );
+    });
   });
 }

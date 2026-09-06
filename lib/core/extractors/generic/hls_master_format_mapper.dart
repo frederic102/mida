@@ -10,7 +10,19 @@ import 'hls_playlist_parser.dart';
 /// goes through this class: `twitch_playlist_parser.dart` parses Twitch's
 /// own master shape independently and is out of this phase's scope
 /// (round 2, Plumbline F8) - "shared" here means shared by the two callers
-/// that opted into it, not "the sole HLS parser in this project".
+/// that opted into it, not "the sole HLS parser in this project". Assessed
+/// again for residual follow-up T5 (`docs/plan-phase6-av-pairing.md`
+/// "라운드 4 판결", "twitch 파서 매퍼 통일") and left unmigrated for a concrete
+/// reason, not just scope: `HlsVariant`/[HlsPlaylistParser.parseMasterVariants]
+/// capture no `NAME=`/`FRAME-RATE=` attributes at all, both of which
+/// `twitch_playlist_parser.dart` reads directly (`NAME` names the
+/// `MediaFormat.id`, `FRAME-RATE` fills `MediaFormat.fps`) - routing Twitch
+/// through this mapper today would silently drop `fps` from every format
+/// (this class never sets it) and rename every id, which is not "the same
+/// output through shared code", it is a real behavior change the existing
+/// tests do not happen to assert on. Closing that gap means teaching
+/// `hls_playlist_parser.dart` those two attributes first, which is outside
+/// this file's own fence.
 ///
 /// Root cause this exists to fix: a master playlist whose variants split
 /// audio into a separate `#EXT-X-MEDIA:TYPE=AUDIO` rendition group (video

@@ -28,6 +28,7 @@ most reliable path, and are tried before generic page analysis.
 | Douyin | `douyin.com/video/<id>` | |
 | Niconico | `nicovideo.jp/watch/<id>` | |
 | Odysee | `odysee.com/@channel/video` | |
+| Vimeo | `vimeo.com/<id>`, `vimeo.com/<id>/<unlisted hash>`, `player.vimeo.com/video/<id>` | Progressive mp4 and an HLS master, read from the same unauthenticated player-config endpoint Vimeo's own web player calls. A private/unlisted video without the right hash is reported as login required rather than attempted. |
 
 ## Other sites
 

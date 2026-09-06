@@ -128,7 +128,7 @@ class MediaDownloadPipeline {
     // actually run past it.
     final plannedAttempts = rankedQueue.length < maxAttempts ? rankedQueue.length : maxAttempts;
 
-    final triedTupleKeys = <String>{};
+    final tried = <SelectedFormats>[];
     Object? lastError;
     var totalAttempted = 0;
     var displayIndex = 0;
@@ -141,10 +141,10 @@ class MediaDownloadPipeline {
       // order; a genuine correction below changes [currentInfo], and this
       // is what makes the very next attempt actually see it.
       rankedQueue = _selector.rank(currentInfo, type, options);
-      final selected = _firstUntried(rankedQueue, triedTupleKeys);
+      final selected = _firstUntried(rankedQueue, tried);
       if (selected == null) break; // nothing left this re-rank offered that has not already failed
 
-      triedTupleKeys.add(_tupleKey(selected));
+      tried.add(selected);
       totalAttempted++;
       displayIndex++;
       final tempPrefix = '$outputDir/.mida_tmp_${currentInfo.id}_${DateTime.now().millisecondsSinceEpoch}_$totalAttempted';
@@ -223,7 +223,7 @@ class MediaDownloadPipeline {
         // on an *adaptive pair* only tells us the merged output as a whole
         // was missing a track, not which half was actually at fault - so a
         // pair never gets its flags rewritten here, only its tuple recorded
-        // as failed (via [triedTupleKeys] below), letting the next re-rank
+        // as failed (via `tried` below), letting the next re-rank
         // offer a genuinely different candidate instead of guessing.
         lastError = e;
         await _tryDelete(finalPath);
@@ -284,9 +284,9 @@ class MediaDownloadPipeline {
   /// [tried] - a full re-rank after a correction can (and usually does)
   /// re-offer an already-failed candidate at a different position, so this
   /// always scans from the top rather than resuming from some prior index.
-  SelectedFormats? _firstUntried(List<SelectedFormats> rankedQueue, Set<String> tried) {
+  SelectedFormats? _firstUntried(List<SelectedFormats> rankedQueue, List<SelectedFormats> tried) {
     for (final candidate in rankedQueue) {
-      if (!tried.contains(_tupleKey(candidate))) return candidate;
+      if (!tried.any((t) => _sameTuple(t, candidate))) return candidate;
     }
     return null;
   }
@@ -303,10 +303,8 @@ class MediaDownloadPipeline {
   /// with [_correctedInfo] matching by `identical()` - a correction can
   /// never silently overwrite a *different* format that just happens to
   /// carry the same id.
-  String _tupleKey(SelectedFormats selected) {
-    if (selected.muxed != null) return 'm:${identityHashCode(selected.muxed)}';
-    return 'p:${identityHashCode(selected.video)}:${identityHashCode(selected.audio)}';
-  }
+  static bool _sameTuple(SelectedFormats a, SelectedFormats b) =>
+      identical(a.muxed, b.muxed) && identical(a.video, b.video) && identical(a.audio, b.audio);
 
   /// Builds a corrected [MediaInfo] with [original] (the single muxed
   /// format that just failed its post-download probe) replaced by a

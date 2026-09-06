@@ -292,3 +292,36 @@ Uint8List withFirstSampleEntrySizeOverwritten(
   copy.setRange(sampleEntryOffset, sampleEntryOffset + 4, _u32(size));
   return copy;
 }
+
+/// Returns a copy of [bytes] with the given trak's `stsd` `entry_count`
+/// field (content offset 4, right after the 4-byte version/flags) forced
+/// to 0 - the real sample entry bytes [buildFmp4Init] already wrote stay
+/// exactly where they were, untouched, right after that field. Fixture
+/// support for `IsoBmffReader`'s "entry_count == 0 must not scan trailing
+/// bytes" test (residual follow-up, `docs/plan-phase6-av-pairing.md`
+/// "라운드 4 판결"): a reader that skips straight past `entry_count`
+/// without ever reading its value would still find this real sample entry
+/// sitting right there and wrongly report its fourcc as the codec.
+Uint8List withStsdEntryCountZeroed(Uint8List bytes, {int trakIndex = 0}) {
+  final copy = Uint8List.fromList(bytes);
+  final moovOffset = _findBoxOffset(copy, 'moov', 0, copy.length);
+  final moovSize = ByteData.sublistView(copy, moovOffset, moovOffset + 4).getUint32(0);
+  var trakOffset = _findBoxOffset(copy, 'trak', moovOffset + 8, moovOffset + moovSize);
+  for (var i = 0; i < trakIndex; i++) {
+    final trakSize = ByteData.sublistView(copy, trakOffset, trakOffset + 4).getUint32(0);
+    trakOffset = _findBoxOffset(copy, 'trak', trakOffset + trakSize, moovOffset + moovSize);
+  }
+  final trakSize = ByteData.sublistView(copy, trakOffset, trakOffset + 4).getUint32(0);
+
+  final mdiaOffset = _findBoxOffset(copy, 'mdia', trakOffset + 8, trakOffset + trakSize);
+  final mdiaSize = ByteData.sublistView(copy, mdiaOffset, mdiaOffset + 4).getUint32(0);
+  final minfOffset = _findBoxOffset(copy, 'minf', mdiaOffset + 8, mdiaOffset + mdiaSize);
+  final minfSize = ByteData.sublistView(copy, minfOffset, minfOffset + 4).getUint32(0);
+  final stblOffset = _findBoxOffset(copy, 'stbl', minfOffset + 8, minfOffset + minfSize);
+  final stblSize = ByteData.sublistView(copy, stblOffset, stblOffset + 4).getUint32(0);
+  final stsdOffset = _findBoxOffset(copy, 'stsd', stblOffset + 8, stblOffset + stblSize);
+
+  final entryCountOffset = stsdOffset + 8 + 4;
+  copy.setRange(entryCountOffset, entryCountOffset + 4, _u32(0));
+  return copy;
+}

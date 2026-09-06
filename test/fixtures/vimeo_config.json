@@ -1,0 +1,61 @@
+{
+  "cache_id": "REDACTED",
+  "request": {
+    "files": {
+      "progressive": [
+        {
+          "profile": 174,
+          "width": 640,
+          "height": 360,
+          "mime": "video/mp4",
+          "fps": 25,
+          "url": "https://player.vimeo.com/progressive_redirect/playback/22439234/rendition/360p?signature=REDACTED",
+          "cdn": "akamai",
+          "quality": "360p"
+        },
+        {
+          "profile": 175,
+          "width": 1280,
+          "height": 720,
+          "mime": "video/mp4",
+          "fps": 25,
+          "url": "https://player.vimeo.com/progressive_redirect/playback/22439234/rendition/720p?signature=REDACTED",
+          "cdn": "akamai",
+          "quality": "720p"
+        }
+      ],
+      "hls": {
+        "default_cdn": "akamai_interconnect",
+        "cdns": {
+          "akamai_interconnect": {
+            "url": "https://vod-adaptive-ak.vimeocdn.com/exp=REDACTED/master.json?query_string_ranges=1",
+            "origin": "gcs"
+          }
+        }
+      },
+      "dash": {
+        "default_cdn": "akamai_interconnect",
+        "cdns": {
+          "akamai_interconnect": {
+            "url": "https://vod-adaptive-ak.vimeocdn.com/exp=REDACTED/master.mpd?query_string_ranges=1",
+            "origin": "gcs"
+          }
+        }
+      }
+    }
+  },
+  "video": {
+    "id": 22439234,
+    "title": "Kenya's Digital Divide",
+    "duration": 596,
+    "owner": {
+      "name": "Vimeo Video School",
+      "url": "https://vimeo.com/vimeoschool"
+    },
+    "thumbs": {
+      "640": "https://i.vimeocdn.com/video/000000_640.jpg",
+      "960": "https://i.vimeocdn.com/video/000000_960.jpg",
+      "1280": "https://i.vimeocdn.com/video/000000_1280.jpg"
+    }
+  }
+}

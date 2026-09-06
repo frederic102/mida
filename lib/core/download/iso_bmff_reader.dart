@@ -297,6 +297,17 @@ class IsoBmffReader {
     final stsd = _require(_find(_readBoxes(bytes, stbl.contentStart, stbl.contentEnd), 'stsd'));
     if (stsd == null) return null;
 
+    // `entry_count` (4 bytes) follows the 4-byte version/flags (residual
+    // follow-up, docs/plan-phase6-av-pairing.md "라운드 4 판결"): a
+    // declared 0 means "no sample entries at all" and must be trusted
+    // before ever looking at whatever bytes happen to sit right after it -
+    // those are not a hidden entry, they are just whatever content the
+    // box's own declared size (or an incomplete-window clamp) left
+    // trailing, and reading them as a real sample entry would report a
+    // codec for a track that has none.
+    final entryCount = _readUint32(bytes, stsd.contentStart + 4, end: stsd.contentEnd);
+    if (entryCount == null || entryCount == 0) return null;
+
     const entriesOffset = 8;
     if (stsd.contentStart + entriesOffset > stsd.contentEnd) return null;
     final entries = _readBoxes(bytes, stsd.contentStart + entriesOffset, stsd.contentEnd);
