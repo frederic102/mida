@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/frederic102/mida?style=flat-square&color=brightgreen" alt="Release">
   <img src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/Flutter-3.5+-02569B?style=flat-square&logo=flutter" alt="Flutter">
 </p>
 
@@ -23,7 +23,7 @@
 
 ## Features
 
-- **Video Download** - YouTube, Twitter/X, Instagram, TikTok and 11 more native platforms, plus most other video sites via page analysis and browser capture (see [Supported Sites](docs/supported-sites.md))
+- **Video Download** - YouTube, Twitter/X, Instagram, TikTok and 12 more native platforms, plus most other video sites via page analysis and browser capture (see [Supported Sites](docs/supported-sites.md))
 - **Audio Download** - Extract audio in MP3, M4A, FLAC, WAV, Opus
 - **Video Compression** - Two-pass encoding with target file size (presets or custom)
 - **Audio Extraction** - Extract audio tracks from local video files
@@ -36,9 +36,35 @@ Go to [**Releases**](https://github.com/frederic102/mida/releases/latest) and do
 | Platform | File | Requirements |
 |----------|------|--------------|
 | Windows | `MiDa_Setup_v*.exe` | Windows 10+ |
-| macOS | `MiDa.dmg` | macOS 11+ |
+| macOS | No installer published yet. A build script exists (`scripts/build_macos.sh`) but no release has been built or tested on a Mac. | Build from source |
 
 FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok, Instagram and more natively; see [Supported Sites](docs/supported-sites.md) for the full list. Other sites are handled by generic page analysis and, when needed, a real off-screen window of your installed Microsoft Edge or Google Chrome (headless only as a fallback, for example on a machine with no interactive session). DRM-protected content, live streams, and most login-only or age-gated content are not supported; see [Supported Sites](docs/supported-sites.md) for the exceptions. Set `MIDA_BROWSER_PATH` to point at a specific browser install, and turn on "Use browser login session" in Settings to let MiDa reuse your own signed-in browser session for sign-in-only videos (off by default).
+
+## What actually works
+
+Numbers below come from `test/live/lead_coverage_probe_test.dart`, a 32-site corpus where "works"
+means resolve, a real download through the pipeline, and ffprobe reporting a stream. Details and
+per-site reasons are in [docs/coverage-corpus.md](docs/coverage-corpus.md).
+
+| Measured | Result |
+|---|---|
+| v2.2.0 full run (2026-09-06) | 19 of 32 downloaded, 28 of 32 resolved |
+| v2.3.0 A/V pairing fix, five previously failing sites | 4 of 5 now download with video and audio (Vimeo still open; the native Vimeo extractor shipped after this run and is not yet confirmed live) |
+
+The full 32-site run has not been repeated on v2.3.0. Treat the numbers as a snapshot.
+
+## Dependencies
+
+MiDa deliberately keeps its footprint small. There is no yt-dlp, no Python, no Node, no runtime
+to install, and no network service of ours in the loop.
+
+- **Bundled**: `ffmpeg.exe` and `ffprobe.exe` (static builds, in the installer).
+- **Used from your machine**: Microsoft Edge or Google Chrome, only for the browser-capture fallback.
+- **Dart packages (9 direct)**: `provider`, `path`, `path_provider`, `file_picker`, `desktop_drop`,
+  `url_launcher`, `shared_preferences`, `crypto`, `google_fonts`. Everything else (HTTP, HTML and
+  JSON parsing, HLS/DASH manifest handling, MP4 box sniffing, the DevTools protocol client) is
+  written against the Dart SDK. `google_fonts` fetches the Inter font once at first launch and
+  caches it; the app falls back to the system font if that fetch fails.
 
 ## Building from Source
 

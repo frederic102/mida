@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- Dropped the unused `cupertino_icons` package; 9 direct Dart packages remain.
+- README states the measured coverage, the dependency footprint, and that no macOS
+  installer has been published. Supported-sites list marks Naver TV as shut down
+  (2026-09-30).
+
 ## [2.3.0] - 2026-09-06
 
 ### Added

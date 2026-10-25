@@ -1,6 +1,6 @@
 # Supported Sites
 
-Last updated 2026-09-06 (v2.2.0). This list reflects what is registered in
+Last updated 2026-10-25 (v2.3.0). This list reflects what is registered in
 `lib/core/extractors/extractor_registry_builder.dart` and what MiDa's
 generic/browser-capture tiers can reach today. Sites change their pages and
 anti-bot layers without notice, so treat this as a snapshot, not a promise.
@@ -17,7 +17,7 @@ most reliable path, and are tried before generic page analysis.
 | X (Twitter) | `x.com` / `twitter.com` status URLs | |
 | TikTok | `tiktok.com/@user/video/...` | |
 | Instagram | `instagram.com/reel/...`, `/p/...` | |
-| Naver TV | `tv.naver.com/v/<id>` | Naver announced Naver TV will shut down on 2026-09-30. Existing links will stop working after that date regardless of MiDa. |
+| Naver TV | `tv.naver.com/v/<id>` | Naver TV shut down on 2026-09-30. The extractor is kept so the URL gets a clear error instead of a browser capture, but no Naver TV link is expected to work any more. |
 | CHZZK | `chzzk.naver.com/video/<no>` | VOD only. Live broadcasts (`chzzk.naver.com/live/...`) are out of scope and are not matched by this extractor. |
 | Kakao TV | `tv.kakao.com/.../cliplink/<id>` | Kakao's public video service has already ended. MiDa still recognizes the URL and returns a clear "not found" instead of wasting time on a browser capture that could never succeed. Kept so the error is honest rather than silent. |
 | Dailymotion | `dailymotion.com/video/<id>` | The page resolves natively. On some videos the actual video CDN blocks this app's own TLS connection even though a format was found; see Not Supported below. |
