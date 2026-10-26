@@ -107,6 +107,19 @@ void main() {
       expect(e.nextStep, contains('MIDA_BROWSER_PATH'));
     });
 
+    test('BROWSER_MISSING from the login session asks for Chrome; the generic one keeps Edge as a fallback', () {
+      const loginText = 'Using your browser login session needs Google Chrome. Install Chrome or turn off '
+          '"Use browser login session". Checked: x. (status: BROWSER_MISSING)';
+      final login = describeFailure(loginText, browserLoginEnabled: true);
+      expect(login.headline, 'Using your browser login session needs Google Chrome.');
+      expect(login.nextStep, contains('turn off Use browser login session in Settings'));
+      expect(login.nextStep, isNot(contains('MIDA_BROWSER_PATH')));
+
+      final generic = describeFailure('(status: BROWSER_MISSING)', browserLoginEnabled: false);
+      expect(generic.headline, contains('Google Chrome (preferred) or Microsoft Edge'));
+      expect(generic.nextStep, contains('MIDA_BROWSER_PATH'));
+    });
+
     test('DRM and unsupported links offer no retry button', () {
       expect(describeFailure('(status: DRM)', browserLoginEnabled: false).action, FailureAction.none);
       expect(describeFailure('(status: UNSUPPORTED_URL)', browserLoginEnabled: false).action, FailureAction.none);

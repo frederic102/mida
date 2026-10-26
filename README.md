@@ -38,7 +38,7 @@ Go to [**Releases**](https://github.com/frederic102/mida/releases/latest) and do
 | Windows | `MiDa_Setup_v*.exe` | Windows 10+ |
 | macOS | No installer published yet. A build script exists (`scripts/build_macos.sh`) but no release has been built or tested on a Mac. | Build from source |
 
-FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok, Instagram and more natively; see [Supported Sites](docs/supported-sites.md) for the full list. Other sites are handled by generic page analysis and, when needed, a real off-screen window of your installed Microsoft Edge or Google Chrome (headless only as a fallback, for example on a machine with no interactive session). DRM-protected content, live streams, and most login-only or age-gated content are not supported; see [Supported Sites](docs/supported-sites.md) for the exceptions. Set `MIDA_BROWSER_PATH` to point at a specific browser install, and turn on "Use browser login session" in Settings to let MiDa reuse your own signed-in browser session for sign-in-only videos (off by default).
+FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok, Instagram and more natively; see [Supported Sites](docs/supported-sites.md) for the full list. Other sites are handled by generic page analysis and, when needed, a real off-screen window of your installed Google Chrome, or Microsoft Edge when Chrome is missing (headless only as a fallback, for example on a machine with no interactive session). DRM-protected content, live streams, and most login-only or age-gated content are not supported; see [Supported Sites](docs/supported-sites.md) for the exceptions. Set `MIDA_BROWSER_PATH` to point at a specific browser install, and turn on "Use browser login session" in Settings to let MiDa reuse your own signed-in browser session for sign-in-only videos (off by default).
 
 ## What actually works
 
@@ -64,7 +64,7 @@ MiDa deliberately keeps its footprint small. There is no yt-dlp, no Python, no N
 to install, and no network service of ours in the loop.
 
 - **Bundled**: `ffmpeg.exe` and `ffprobe.exe` (static builds, in the installer).
-- **Used from your machine**: Microsoft Edge or Google Chrome, only for the browser-capture fallback.
+- **Used from your machine**: Google Chrome (Microsoft Edge only when Chrome is missing), only for the browser-capture fallback. The browser login session requires Chrome.
 - **Dart packages (9 direct)**: `provider`, `path`, `path_provider`, `file_picker`, `desktop_drop`,
   `url_launcher`, `shared_preferences`, `crypto`, `google_fonts`. Everything else (HTTP, HTML and
   JSON parsing, HLS/DASH manifest handling, MP4 box sniffing, the DevTools protocol client) is
@@ -151,7 +151,7 @@ Environment variables:
 | `MIDA_HEADLESS=1` | Same as `--headless` (`true` and `yes` also work). |
 | `MIDA_FFMPEG_PATH` | Absolute directory or executable to use for FFmpeg, CLI only (the app ignores it). `--ffmpeg` wins over it. Without it, the copy next to the executable is used, then absolute `PATH` directories; never the current folder. |
 | `MIDA_DEBUG=1` | Sanitized failure detail on stderr (the classified message and a stack trace, never the raw exception). |
-| `MIDA_BROWSER_PATH` | Browser install used for capture (Edge or Chrome). |
+| `MIDA_BROWSER_PATH` | Browser install used for capture. Chrome is preferred and Edge is the fallback; with the browser login session on, only a Chrome path is accepted. |
 
 Forced headless: `--headless` (or `MIDA_HEADLESS`) means the browser-capture tier never opens a window. It makes
 one headless attempt and no headed retry. Sites behind a bot-check can refuse a headless browser, and MiDa does
@@ -163,7 +163,7 @@ reports for the same kind of check.
 
 `LOGIN_REQUIRED`: a native extractor that hits a login wall hands the URL to the generic and browser-capture
 tiers first. Only if those fail too does the CLI report `LOGIN_REQUIRED` (exit 5). `--login-session` lets the
-browser capture use your signed-in Edge or Chrome profile; it is off by default.
+browser capture use your signed-in Chrome profile (Chrome is required; Edge is not used); it is off by default.
 
 For agents, [`.claude/skills/mida-download/SKILL.md`](.claude/skills/mida-download/SKILL.md) describes
 the same workflow in a form Claude Code loads automatically.
@@ -209,7 +209,7 @@ flutter run -d windows   # or: flutter run -d macos
 |-----------|------|
 | [Flutter](https://flutter.dev) | Cross-platform desktop UI |
 | Native extractors | YouTube, X (Twitter), TikTok, Instagram and more (see [Supported Sites](docs/supported-sites.md)), plus generic page analysis |
-| Microsoft Edge / Google Chrome (off-screen window, user-installed) | Fallback capture for sites the generic analysis cannot parse; headless only if a real window cannot launch |
+| Google Chrome, or Microsoft Edge when Chrome is missing (off-screen window, user-installed) | Fallback capture for sites the generic analysis cannot parse; headless only if a real window cannot launch |
 | [FFmpeg](https://ffmpeg.org) | Media encoding and processing |
 
 ## Contributing

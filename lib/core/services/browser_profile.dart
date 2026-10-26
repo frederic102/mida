@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'browser_executable_locator.dart';
+
 /// Real installed browsers this class knows how to locate and stage a
 /// cookie-only profile copy for. Firefox, Safari, Brave, Vivaldi, and any
 /// browser synced through the cloud are out of scope (see
@@ -31,11 +33,11 @@ class BrowserProfile {
   /// (Brave, Vivaldi): callers must treat that exactly like "no profile
   /// available" and fall back to an empty one.
   static BrowserProfileKind? kindForExecutable(String executablePath) {
-    final lower = executablePath.toLowerCase();
-    if (lower.contains('msedge') || lower.contains('microsoft edge')) {
-      return BrowserProfileKind.edge;
-    }
-    if (lower.contains('chrome')) return BrowserProfileKind.chrome;
+    // File name only: a folder like `D:\Microsoft Edge Tools\` must not
+    // make chrome.exe look like Edge.
+    final name = executablePath.split(RegExp(r'[\\/]')).last.toLowerCase();
+    if (name.startsWith('msedge') || name == 'microsoft edge') return BrowserProfileKind.edge;
+    if (BrowserExecutableLocator.isChromePath(name)) return BrowserProfileKind.chrome;
     return null;
   }
 

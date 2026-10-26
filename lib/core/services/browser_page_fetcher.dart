@@ -69,13 +69,19 @@ class BrowserPageFetcher {
       );
     }
 
-    final lookup = await BrowserExecutableLocator.find(fixedCandidatePaths: _candidatePaths);
+    final lookup = await BrowserExecutableLocator.find(
+      fixedCandidatePaths: _candidatePaths,
+      chromeOnly: useBrowserLoginSession,
+    );
     final executable = lookup.path;
     if (executable == null) {
       throw MediaExtractionException(
         'BROWSER_MISSING',
-        'Instagram and other JS-rendered pages need Microsoft Edge, Google Chrome, Brave, or '
-            'Vivaldi installed to load. Checked: ${lookup.checkedPaths.join(', ')}.',
+        useBrowserLoginSession
+            ? 'Using your browser login session needs Google Chrome. Install Chrome or turn off '
+                '"Use browser login session". Checked: ${lookup.checkedPaths.join(', ')}.'
+            : 'Instagram and other JS-rendered pages need Google Chrome, Microsoft Edge, Brave, or '
+                'Vivaldi installed to load. Checked: ${lookup.checkedPaths.join(', ')}.',
       );
     }
 

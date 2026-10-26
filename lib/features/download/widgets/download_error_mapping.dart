@@ -72,7 +72,7 @@ final _statusToken = RegExp(r'(?:status: |MediaExtractionException\()([A-Z_]+)\b
 final defaultFailureRules = <FailureRule>[
   FailureRule(
     FailureKind.browserMissing,
-    RegExp(r'needs Microsoft Edge|Edge, Google Chrome|MIDA_BROWSER_PATH', caseSensitive: false),
+    RegExp(r'needs Microsoft Edge|needs Google Chrome|Edge, Google Chrome|Chrome, Microsoft Edge|MIDA_BROWSER_PATH', caseSensitive: false),
   ),
   FailureRule(FailureKind.headlessBlocked, RegExp(r'headless browser|bot-check', caseSensitive: false)),
   FailureRule(FailureKind.drm, RegExp(r'\bDRM\b|Widevine|PlayReady|FairPlay')),
@@ -142,12 +142,12 @@ ActionableError describeFailure(String rawText, {required bool browserLoginEnabl
       return browserLoginEnabled
           ? make(
               'This video is only available to signed-in viewers.',
-              'Sign in to this site in Edge or Chrome, then retry.',
+              'Sign in to this site in Chrome, then retry.',
               FailureAction.retry,
             )
           : make(
               'This video is only available to signed-in viewers.',
-              'Let MiDa use your Edge or Chrome sign-in, then retry.',
+              'Let MiDa use your Chrome sign-in, then retry.',
               FailureAction.enableBrowserLoginAndRetry,
             );
     case FailureKind.drm:
@@ -157,9 +157,16 @@ ActionableError describeFailure(String rawText, {required bool browserLoginEnabl
         FailureAction.none,
       );
     case FailureKind.browserMissing:
+      if (RegExp(r'login session needs Google Chrome', caseSensitive: false).hasMatch(details)) {
+        return make(
+          'Using your browser login session needs Google Chrome.',
+          'Install Chrome, or turn off Use browser login session in Settings.',
+          FailureAction.retry,
+        );
+      }
       return make(
-        'Reading this site needs Microsoft Edge or Google Chrome, and neither was found.',
-        'Install Edge or Chrome, or set the MIDA_BROWSER_PATH environment variable to the '
+        'Reading this site needs Google Chrome (preferred) or Microsoft Edge, and neither was found.',
+        'Install Chrome or Edge, or set the MIDA_BROWSER_PATH environment variable to the '
             'browser .exe path and restart MiDa.',
         FailureAction.retry,
       );

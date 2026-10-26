@@ -12,7 +12,7 @@ class BrowserLookupResult {
   bool get found => path != null;
 }
 
-/// Finds a system browser executable (Edge/Chrome/Brave/Vivaldi) for
+/// Finds a system browser executable (Chrome/Edge/Brave/Vivaldi) for
 /// headless automation, shared by `BrowserPageFetcher` (DOM dump) and
 /// `BrowserDevtoolsSession` (CDP capture): same small-locator pattern as
 /// `FfmpegLocator` (one place resolves a path, callers just ask for it).
@@ -24,9 +24,9 @@ class BrowserLookupResult {
 class BrowserExecutableLocator {
   const BrowserExecutableLocator._();
 
-  static const List<String> pathProbeNames = ['msedge', 'chrome', 'brave'];
+  static const List<String> pathProbeNames = ['chrome', 'msedge', 'brave'];
 
-  /// Fixed install-path candidates, in priority order (Edge, then Chrome,
+  /// Fixed install-path candidates, in priority order (Chrome, then Edge,
   /// then Brave, then Vivaldi), before the PATH probe. Exposed so a
   /// caller building its own `BROWSER_MISSING` message, or a test that
   /// wants the real list without the env var/PATH-probe steps, can see
@@ -34,8 +34,8 @@ class BrowserExecutableLocator {
   static List<String> defaultFixedCandidatePaths({Map<String, String>? environment}) {
     if (Platform.isMacOS) {
       return const [
-        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
         '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
         '/Applications/Vivaldi.app/Contents/MacOS/Vivaldi',
       ];
@@ -45,16 +45,24 @@ class BrowserExecutableLocator {
     final programFiles = env['ProgramFiles'] ?? r'C:\Program Files';
     final localAppData = env['LOCALAPPDATA'];
     return [
-      '$programFilesX86\\Microsoft\\Edge\\Application\\msedge.exe',
-      '$programFiles\\Microsoft\\Edge\\Application\\msedge.exe',
       '$programFiles\\Google\\Chrome\\Application\\chrome.exe',
       if (localAppData != null && localAppData.isNotEmpty) '$localAppData\\Google\\Chrome\\Application\\chrome.exe',
+      '$programFilesX86\\Microsoft\\Edge\\Application\\msedge.exe',
+      '$programFiles\\Microsoft\\Edge\\Application\\msedge.exe',
       '$programFiles\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
       if (localAppData != null && localAppData.isNotEmpty)
         '$localAppData\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
       '$programFiles\\Vivaldi\\Application\\vivaldi.exe',
       if (localAppData != null && localAppData.isNotEmpty) '$localAppData\\Vivaldi\\Application\\vivaldi.exe',
     ];
+  }
+
+  /// True when [path]'s file name is Google Chrome's (`chrome.exe` on
+  /// Windows, `Google Chrome` on macOS). The file name only, so a folder
+  /// called `chrome` or a `chromium.exe` does not count.
+  static bool isChromePath(String path) {
+    final name = path.split(RegExp(r'[\\/]')).last.toLowerCase();
+    return name == 'chrome.exe' || name == 'chrome' || name == 'google chrome';
   }
 
   /// Finds the first working candidate.
@@ -67,6 +75,11 @@ class BrowserExecutableLocator {
   /// Otherwise the full production search runs: `MIDA_BROWSER_PATH`, then
   /// [defaultFixedCandidatePaths], then [probePath].
   ///
+  /// With [chromeOnly] (browser login session: the signed-in profile staged
+  /// is Chrome's), only Google Chrome qualifies: `MIDA_BROWSER_PATH` must
+  /// name `chrome.exe` / `Google Chrome`, and every other candidate list
+  /// (including [fixedCandidatePaths]) is filtered the same way. No Edge fallback.
+  ///
   /// [exists] and [probePath] are independently injectable so tests can
   /// exercise the environment-variable and PATH-probe steps hermetically
   /// (without touching the real filesystem or PATH) while still calling
@@ -76,6 +89,7 @@ class BrowserExecutableLocator {
     Future<bool> Function(String path)? exists,
     Future<List<String>> Function()? probePath,
     Map<String, String>? environment,
+    bool chromeOnly = false,
   }) async {
     final checkExists = exists ?? (path) => File(path).exists();
     final checked = <String>[];
@@ -85,8 +99,10 @@ class BrowserExecutableLocator {
       return await checkExists(path) ? BrowserLookupResult(path: path, checkedPaths: checked) : null;
     }
 
+    Iterable<String> only(Iterable<String> paths) => chromeOnly ? paths.where(isChromePath) : paths;
+
     if (fixedCandidatePaths != null) {
-      for (final path in fixedCandidatePaths()) {
+      for (final path in only(fixedCandidatePaths())) {
         final hit = await tryPath(path);
         if (hit != null) return hit;
       }
@@ -95,17 +111,17 @@ class BrowserExecutableLocator {
 
     final env = environment ?? Platform.environment;
     final override = env['MIDA_BROWSER_PATH'];
-    if (override != null && override.isNotEmpty) {
+    if (override != null && override.isNotEmpty && only([override]).isNotEmpty) {
       final hit = await tryPath(override);
       if (hit != null) return hit;
     }
 
-    for (final path in defaultFixedCandidatePaths(environment: env)) {
+    for (final path in only(defaultFixedCandidatePaths(environment: env))) {
       final hit = await tryPath(path);
       if (hit != null) return hit;
     }
 
-    for (final path in await (probePath ?? _probePath)()) {
+    for (final path in only(await (probePath ?? _probePath)())) {
       if (checked.contains(path)) continue;
       final hit = await tryPath(path);
       if (hit != null) return hit;
@@ -114,7 +130,7 @@ class BrowserExecutableLocator {
     return BrowserLookupResult(path: null, checkedPaths: checked);
   }
 
-  /// `where msedge chrome brave` on Windows, `which msedge chrome brave`
+  /// `where chrome msedge brave` on Windows, `which chrome msedge brave`
   /// elsewhere. Both accept an argument list (no shell string is built),
   /// print whichever names resolved (one per line) to stdout, and print
   /// the rest as "not found" to stderr without failing the whole command

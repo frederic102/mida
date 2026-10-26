@@ -46,7 +46,7 @@ abstract class DevtoolsSession {
   Future<void> close();
 }
 
-/// Drives a system browser (Edge/Chrome) over the Chrome DevTools Protocol -
+/// Drives a system browser (Chrome/Edge) over the Chrome DevTools Protocol -
 /// headed by default, off-screen (see [BrowserLaunchArgs]), headless only as
 /// a fallback if a headed launch fails outright. Spec:
 /// `docs/plan-browser-capture.md`. Launches its own
@@ -110,17 +110,20 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
     Map<String, String>? environment,
   }) async {
-    // Fire-and-forget: a slow/locked temp dir must never add latency to
-    // this capture's own launch.
+    // Fire-and-forget: a slow/locked temp dir must never delay this launch.
     unawaited(BrowserTempCleanup.sweepStale());
 
-    final lookup = await BrowserExecutableLocator.find(fixedCandidatePaths: candidatePaths);
+    final lookup =
+        await BrowserExecutableLocator.find(fixedCandidatePaths: candidatePaths, chromeOnly: useBrowserLoginSession);
     final executable = lookup.path;
     if (executable == null) {
       throw MediaExtractionException(
         'BROWSER_MISSING',
-        'Browser network capture needs Microsoft Edge, Google Chrome, Brave, or Vivaldi installed. '
-            'Checked: ${lookup.checkedPaths.join(', ')}.',
+        useBrowserLoginSession
+            ? 'Using your browser login session needs Google Chrome. Install Chrome or turn off '
+                '"Use browser login session". Checked: ${lookup.checkedPaths.join(', ')}.'
+            : 'Browser network capture needs Google Chrome, Microsoft Edge, Brave, or Vivaldi installed. '
+                'Checked: ${lookup.checkedPaths.join(', ')}.',
       );
     }
 

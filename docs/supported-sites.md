@@ -49,7 +49,8 @@ Any other `http(s)` URL is handled in two steps, tried in order:
    or DASH manifests, and common `data-*` video attributes. This step never
    launches a browser.
 2. **Browser capture** - if step 1 finds nothing, MiDa launches your
-   installed Edge or Chrome as a real, visible-to-the-OS but off-screen
+   installed Chrome (Edge only when Chrome is missing; the browser login
+   session requires Chrome) as a real, visible-to-the-OS but off-screen
    window, loads the page, dismisses consent/age-gate overlays, tries to
    start playback, and records the actual media requests the page makes.
    This is what lets MiDa follow a site with no dedicated extractor and no

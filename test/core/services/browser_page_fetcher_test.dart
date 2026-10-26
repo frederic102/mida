@@ -81,6 +81,20 @@ void main() {
       );
     });
 
+    test('login session is Chrome only: a lone msedge.exe is BROWSER_MISSING asking for Chrome', () async {
+      final edge = File('${workDir.path}/msedge.exe')..writeAsStringSync('not a program');
+      final fetcher = BrowserPageFetcher(candidatePaths: () => [edge.path], useBrowserLoginSession: true);
+
+      await expectLater(
+        fetcher.fetchDom(Uri.parse('https://example.com')),
+        throwsA(
+          isA<MediaExtractionException>()
+              .having((e) => e.status, 'status', 'BROWSER_MISSING')
+              .having((e) => e.reason, 'reason', contains('needs Google Chrome')),
+        ),
+      );
+    });
+
     test('runs the executable with the expected headless argument list and returns its stdout', () async {
       final bat = _writeFakeBrowser(
         workDir,

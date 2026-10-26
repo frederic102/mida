@@ -54,6 +54,19 @@ void main() {
       );
     });
 
+    test('decides by file name only, not by a folder name in the path', () {
+      expect(BrowserProfile.kindForExecutable(r'D:\Microsoft Edge Tools\chrome.exe'), BrowserProfileKind.chrome);
+      expect(
+        BrowserProfile.kindForExecutable(r'C:\Users\a\AppData\Local\Google\Chrome\Application\chrome.exe'),
+        BrowserProfileKind.chrome,
+      );
+      expect(BrowserProfile.kindForExecutable(r'D:\Chrome Tools\msedge.exe'), BrowserProfileKind.edge);
+      expect(
+        BrowserProfile.kindForExecutable('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+        BrowserProfileKind.chrome,
+      );
+    });
+
     test('returns null for a browser this class does not know a profile layout for (brave)', () {
       expect(
         BrowserProfile.kindForExecutable(r'C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe'),

@@ -58,6 +58,10 @@ live run says otherwise.
 - Claude Code skill `.claude/skills/mida-download/SKILL.md` and `AGENTS.md`.
 
 ### Changed
+- Browser capture prefers Google Chrome over Microsoft Edge (Edge is used only when
+  Chrome is missing). The browser login session now requires Chrome: it ignores a
+  `MIDA_BROWSER_PATH` that is not `chrome.exe` / `Google Chrome`, never falls back to
+  Edge, and reports `BROWSER_MISSING` asking to install Chrome or turn the setting off.
 - The GUI ignores `MIDA_FFMPEG_PATH`; only the CLI reads it, per run, and
   only as an absolute path. When neither the override nor the bundled copy
   exists, ffmpeg and ffprobe are looked up in absolute `PATH` directories
