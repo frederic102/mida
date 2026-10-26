@@ -1,96 +1,121 @@
 import 'package:flutter/material.dart';
-import '../../../core/utils/url_parser.dart';
+import 'package:flutter/services.dart';
+import '../screens/url_batch.dart';
+import 'clipboard_suggestion_chip.dart';
 
-/// URL entry card with paste button and detected-platform pill.
+/// Link entry card: accepts one or many links (one per line or separated
+/// by spaces), Enter starts, Shift+Enter adds a line, Esc clears.
 class DownloadUrlInputCard extends StatelessWidget {
   const DownloadUrlInputCard({
     super.key,
     required this.controller,
+    required this.focusNode,
+    required this.batch,
     required this.onChanged,
     required this.onPaste,
     required this.onClear,
-    required this.isValidUrl,
-    required this.detectedPlatform,
+    required this.onSubmit,
+    required this.suggestion,
+    required this.onAcceptSuggestion,
+    required this.onDismissSuggestion,
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
+  final UrlBatch batch;
   final ValueChanged<String> onChanged;
   final VoidCallback onPaste;
   final VoidCallback onClear;
-  final bool isValidUrl;
-  final PlatformType? detectedPlatform;
+  final VoidCallback onSubmit;
+  final List<String>? suggestion;
+  final VoidCallback onAcceptSuggestion;
+  final VoidCallback onDismissSuggestion;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final muted = text.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Enter URL',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('Links', style: text.titleMedium),
             const SizedBox(height: 12),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: controller,
-                    onChanged: onChanged,
-                    decoration: InputDecoration(
-                      hintText: 'YouTube, Twitter, Instagram, TikTok URL',
-                      prefixIcon: const Icon(Icons.link),
-                      suffixIcon: controller.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: onClear,
-                            )
-                          : null,
+                  child: CallbackShortcuts(
+                    bindings: {
+                      const SingleActivator(LogicalKeyboardKey.enter): onSubmit,
+                      const SingleActivator(LogicalKeyboardKey.numpadEnter): onSubmit,
+                      const SingleActivator(LogicalKeyboardKey.escape): onClear,
+                    },
+                    child: TextField(
+                      key: const ValueKey('url-field'),
+                      controller: controller,
+                      focusNode: focusNode,
+                      onChanged: onChanged,
+                      minLines: 1,
+                      maxLines: 6,
+                      keyboardType: TextInputType.multiline,
+                      decoration: InputDecoration(
+                        hintText: 'Paste one or more video links, one per line',
+                        prefixIcon: const Icon(Icons.link),
+                        suffixIcon: controller.text.isNotEmpty
+                            ? IconButton(
+                                tooltip: 'Clear (Esc)',
+                                icon: const Icon(Icons.clear),
+                                onPressed: onClear,
+                              )
+                            : null,
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
-                FilledButton.icon(
+                OutlinedButton.icon(
                   onPressed: onPaste,
-                  icon: const Icon(Icons.paste),
+                  icon: const Icon(Icons.paste, size: 18),
                   label: const Text('Paste'),
                 ),
               ],
             ),
-            if (detectedPlatform != null && isValidUrl) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      UrlParser.getPlatformIcon(detectedPlatform!),
-                      style: const TextStyle(fontSize: 18),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      UrlParser.getPlatformName(detectedPlatform!),
-                      style: TextStyle(
-                        color:
-                            Theme.of(context).colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (suggestion != null)
+                  ClipboardSuggestionChip(
+                    urls: suggestion!,
+                    onInsert: onAcceptSuggestion,
+                    onDismiss: onDismissSuggestion,
+                  ),
+                Text(_status(), style: muted),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  String _status() {
+    final count = batch.urls.length;
+    final skipped = batch.skipped;
+    if (count == 0 && skipped == 0) {
+      return 'Enter to start · Shift+Enter for a new line · Esc to clear';
+    }
+    if (count == 0) return 'No http or https link found yet.';
+    final ready = count == 1 ? '1 link ready' : '$count links ready';
+    if (skipped == 0) return ready;
+    final word = skipped == 1 ? 'entry' : 'entries';
+    return '$ready, $skipped $word skipped (not an http or https link)';
   }
 }

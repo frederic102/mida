@@ -1,0 +1,10 @@
+{
+  "result": 1,
+  "data": {
+    "title_no": 555000111,
+    "title": "Master only",
+    "bj_id": "someone",
+    "total_file_duration": 90000,
+    "files": [{"file": "https://vod-archive.sooplive.co.kr/vod/fm/master.m3u8"}]
+  }
+}

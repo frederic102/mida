@@ -1,0 +1,15 @@
+{
+  "result": 1,
+  "data": {
+    "title_no": 123456789,
+    "title": "Hosts",
+    "files": [{
+      "file": "https://vod-archive.sooplive.co.kr/vod/ok/playlist.m3u8",
+      "quality_info": [
+        {"name": "a", "file": "https://evil.test/vod/a.m3u8", "resolution": "1920x1080"},
+        {"name": "b", "file": "https://sooplive.co.kr.evil.test/vod/b.mp4", "resolution": "1280x720"},
+        {"name": "c", "file": "https://vod-archive.sooplive.co.kr/vod/ok/playlist.m3u8", "resolution": "640x360"}
+      ]
+    }]
+  }
+}

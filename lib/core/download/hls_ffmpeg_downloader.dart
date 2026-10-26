@@ -1,12 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-
 import '../extractors/media_models.dart';
 import '../net/cookie_scope.dart';
 import '../net/per_hop_credentials.dart';
 import '../services/ffmpeg_locator.dart';
+import '../utils/mida_log.dart';
 import 'hls_ffmpeg_args.dart';
 import 'manifest_reference_scanner.dart';
 import 'media_merger.dart';
@@ -177,7 +176,7 @@ class HlsFfmpegDownloader {
     // debug log, so a UI can surface it to the person who started this
     // download instead of it being visible only in a console nobody reads.
     onStatus?.call(message);
-    debugPrint(message);
+    midaLog(message);
     return withoutCredentials;
   }
 

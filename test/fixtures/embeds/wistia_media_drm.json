@@ -1,0 +1,26 @@
+{
+ "media": {
+  "hashedId": "abc123xyz9",
+  "name": "Protected",
+  "duration": 10,
+  "assets": [
+   {
+    "type": "hls_video",
+    "ext": "m3u8",
+    "container": "m3u8",
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/hls00000.bin",
+    "drm": {
+     "widevine": {
+      "license_url": "https://license.example.invalid/wv"
+     }
+    }
+   },
+   {
+    "type": "still_image",
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/thumb000.bin"
+   }
+  ]
+ }
+}

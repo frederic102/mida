@@ -1,45 +1,34 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../services/download_service.dart';
 
-/// Start-download button, disabled while a task is in flight or the URL
-/// is invalid.
+/// Primary "start" button. Adding links while the queue is running is
+/// allowed, so it is only disabled when the field holds no usable link.
 class DownloadActionButton extends StatelessWidget {
   const DownloadActionButton({
     super.key,
-    required this.isValidUrl,
+    required this.linkCount,
+    required this.queueBusy,
     required this.onPressed,
   });
 
-  final bool isValidUrl;
+  final int linkCount;
+  final bool queueBusy;
   final VoidCallback onPressed;
+
+  static String labelFor({required int linkCount, required bool queueBusy}) {
+    if (queueBusy) {
+      return linkCount > 1 ? 'Add $linkCount links to queue' : 'Add to queue';
+    }
+    return linkCount > 1 ? 'Download $linkCount links' : 'Download';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<DownloadService>(
-      builder: (context, service, child) {
-        final isDownloading =
-            service.currentTask?.status == DownloadStatus.downloading ||
-                service.currentTask?.status == DownloadStatus.fetching;
-
-        return FilledButton.icon(
-          onPressed: isValidUrl && !isDownloading ? onPressed : null,
-          icon: isDownloading
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : const Icon(Icons.download),
-          label: Text(isDownloading ? 'Downloading...' : 'Start Download'),
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-          ),
-        );
-      },
+    return FilledButton.icon(
+      key: const ValueKey('start-download'),
+      onPressed: linkCount > 0 ? onPressed : null,
+      icon: Icon(queueBusy ? Icons.playlist_add : Icons.download),
+      label: Text(labelFor(linkCount: linkCount, queueBusy: queueBusy)),
+      style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 20)),
     );
   }
 }

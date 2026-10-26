@@ -1,0 +1,29 @@
+{
+ "title": "Protected",
+ "playlist": [
+  {
+   "title": "Protected",
+   "mediaid": "Ab12Cd34",
+   "sources": [
+    {
+     "file": "https://cdn.jwplayer.com/manifests/Ab12Cd34.mpd",
+     "type": "application/dash+xml",
+     "drm": {
+      "widevine": {
+       "url": "https://widevine.keyos.example/api/v4/getLicense"
+      }
+     }
+    },
+    {
+     "file": "https://cdn.jwplayer.com/manifests/Ab12Cd34.m3u8",
+     "type": "application/vnd.apple.mpegurl",
+     "drm": {
+      "fairplay": {
+       "processSpcUrl": "https://fairplay.keyos.example/api/v4/getLicense"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,1 @@
+{"title":"Off-list hosts","ua":{"mp4":{"360":{"url":"https://evil.test/video/a_360.mp4","meta":{"h":360,"w":640}},"720":{"url":"https://1a-1791.com/video/ok_720.mp4","meta":{"h":720,"w":1280}},"1080":{"url":"https://rumble.com.evil.test/video/b_1080.mp4","meta":{"h":1080,"w":1920}}},"hls":{"auto":{"url":"https://evil.test/p/playlist.m3u8","meta":{}}}}}

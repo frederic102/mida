@@ -1,144 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../../../core/download/media_merger.dart';
 import '../../../core/download/stream_downloader.dart';
 import '../../../core/extractors/extractor_registry_builder.dart';
 import '../../../core/extractors/media_extractor.dart';
 import '../../../core/extractors/media_models.dart';
-import '../../../core/services/settings_service.dart';
+import '../../settings/settings_service.dart';
 import '../../../core/utils/url_parser.dart';
 import '../../../core/utils/file_utils.dart';
+import '../models/download_models.dart';
 import 'all_format_candidates_failed_exception.dart';
 import 'media_download_pipeline.dart';
 
-enum DownloadType { video, audio }
-
-enum DownloadStatus { idle, fetching, downloading, completed, error }
-
-// Video quality options
-enum VideoQuality {
-  best('Best Quality', 'bestvideo'),
-  p2160('4K (2160p)', '2160'),
-  p1440('2K (1440p)', '1440'),
-  p1080('1080p', '1080'),
-  p720('720p', '720'),
-  p480('480p', '480'),
-  p360('360p', '360');
-
-  final String label;
-  final String value;
-  const VideoQuality(this.label, this.value);
-}
-
-// Audio quality options
-enum AudioQuality {
-  best('Best Quality', '0'),
-  high('320 kbps', '320'),
-  medium('256 kbps', '256'),
-  low('128 kbps', '128');
-
-  final String label;
-  final String value;
-  const AudioQuality(this.label, this.value);
-}
-
-// Video format options
-enum VideoFormat {
-  mp4('MP4', 'mp4'),
-  webm('WebM', 'webm'),
-  mkv('MKV', 'mkv');
-
-  final String label;
-  final String value;
-  const VideoFormat(this.label, this.value);
-}
-
-// Audio format options
-enum AudioFormat {
-  mp3('MP3', 'mp3'),
-  m4a('M4A', 'm4a'),
-  opus('Opus', 'opus'),
-  flac('FLAC', 'flac'),
-  wav('WAV', 'wav');
-
-  final String label;
-  final String value;
-  const AudioFormat(this.label, this.value);
-}
-
-// Subtitle options
-enum SubtitleOption {
-  none('No Subtitle', ''),
-  korean('Korean', 'ko'),
-  english('English', 'en'),
-  koreanEnglish('Korean + English', 'ko,en');
-
-  final String label;
-  final String value;
-  const SubtitleOption(this.label, this.value);
-}
-
-// Download options
-class DownloadOptions {
-  final VideoQuality videoQuality;
-  final AudioQuality audioQuality;
-  final VideoFormat videoFormat;
-  final AudioFormat audioFormat;
-  final SubtitleOption subtitleOption;
-
-  const DownloadOptions({
-    this.videoQuality = VideoQuality.best,
-    this.audioQuality = AudioQuality.best,
-    this.videoFormat = VideoFormat.mp4,
-    this.audioFormat = AudioFormat.mp3,
-    this.subtitleOption = SubtitleOption.none,
-  });
-
-  DownloadOptions copyWith({
-    VideoQuality? videoQuality,
-    AudioQuality? audioQuality,
-    VideoFormat? videoFormat,
-    AudioFormat? audioFormat,
-    SubtitleOption? subtitleOption,
-  }) {
-    return DownloadOptions(
-      videoQuality: videoQuality ?? this.videoQuality,
-      audioQuality: audioQuality ?? this.audioQuality,
-      videoFormat: videoFormat ?? this.videoFormat,
-      audioFormat: audioFormat ?? this.audioFormat,
-      subtitleOption: subtitleOption ?? this.subtitleOption,
-    );
-  }
-}
-
-class DownloadTask {
-  final String url;
-  String title;
-  final DownloadType type;
-  final PlatformType platform;
-  final DownloadOptions options;
-  String? thumbnailUrl;
-  String? duration;
-  double progress;
-  DownloadStatus status;
-  String? error;
-  String? statusMessage;
-  String? outputPath;
-
-  DownloadTask({
-    required this.url,
-    required this.title,
-    required this.type,
-    required this.platform,
-    this.options = const DownloadOptions(),
-    this.thumbnailUrl,
-    this.duration,
-    this.progress = 0,
-    this.status = DownloadStatus.idle,
-    this.error,
-    this.statusMessage,
-    this.outputPath,
-  });
-}
+export '../models/download_models.dart';
 
 class DownloadService extends ChangeNotifier {
   final SettingsService _settings;
@@ -151,8 +26,9 @@ class DownloadService extends ChangeNotifier {
   final ExtractorRegistry? _fixedRegistry;
   final MediaDownloadPipeline _pipeline;
 
+  /// The task of the latest `download()` call. The queue keeps the
+  /// session's finished items itself, so there is no separate history list.
   DownloadTask? currentTask;
-  List<DownloadTask> history = [];
 
   /// Guards against a second `download()` call landing while one is
   /// already running (e.g. a double-tap on the download button): without
@@ -190,21 +66,33 @@ class DownloadService extends ChangeNotifier {
     };
   }
 
-  Future<void> download(String url, DownloadType type, {DownloadOptions options = const DownloadOptions()}) async {
+  /// Downloads [url] and returns the task this call created, or null when
+  /// another download was already running (nothing started). The returned
+  /// task is the caller's own, even if [currentTask] has moved on since.
+  ///
+  /// [openFolderOnSuccess]: open the download folder once the file is
+  /// saved. Per call, so a caller that wants to batch the opens (the queue)
+  /// turns it off for its own downloads without touching anyone else's.
+  Future<DownloadTask?> download(
+    String url,
+    DownloadType type, {
+    DownloadOptions options = const DownloadOptions(),
+    bool openFolderOnSuccess = true,
+  }) async {
     if (_isDownloading) {
       currentTask?.statusMessage = 'A download is already in progress. Wait for it to finish and try again.';
       notifyListeners();
-      return;
+      return null;
     }
     _isDownloading = true;
     try {
-      await _runDownload(url, type, options);
+      return await _runDownload(url, type, options, openFolderOnSuccess);
     } finally {
       _isDownloading = false;
     }
   }
 
-  Future<void> _runDownload(String url, DownloadType type, DownloadOptions options) async {
+  Future<DownloadTask> _runDownload(String url, DownloadType type, DownloadOptions options, bool openFolder) async {
     final platform = UrlParser.detectPlatform(url);
     final uri = Uri.tryParse(url);
 
@@ -229,7 +117,7 @@ class DownloadService extends ChangeNotifier {
       }
     }
 
-    currentTask = DownloadTask(
+    final task = DownloadTask(
       url: url,
       title: info?['title'] ?? 'Unknown',
       type: type,
@@ -239,13 +127,14 @@ class DownloadService extends ChangeNotifier {
       duration: info?['duration'],
       status: DownloadStatus.fetching,
     );
+    currentTask = task;
     notifyListeners();
 
     try {
       if (mediaInfo == null) {
         throw resolveError ?? Exception('Could not read this video. Check the URL and try again.');
       }
-      currentTask!.status = DownloadStatus.downloading;
+      task.status = DownloadStatus.downloading;
       notifyListeners();
 
       final outputPath = await _pipeline.download(
@@ -254,27 +143,31 @@ class DownloadService extends ChangeNotifier {
         options: options,
         outputDir: _settings.downloadPath,
         onProgress: (progress) {
-          currentTask!.progress = progress;
+          task.progress = progress;
           notifyListeners();
         },
         onStatus: (message) {
-          currentTask!.statusMessage = message;
+          task.statusMessage = message;
           notifyListeners();
         },
       );
-      currentTask!.outputPath = outputPath;
-
-      currentTask!.status = DownloadStatus.completed;
-      history.insert(0, currentTask!);
-
-      // Auto-open folder when download completes
-      FileUtils.openFolder(_settings.downloadPath);
+      task.outputPath = outputPath;
+      task.status = DownloadStatus.completed;
+      if (openFolder) {
+        // Not awaited (the download is done); a file manager that fails to
+        // start must not surface as an unhandled async error.
+        unawaited(FileUtils.openFolder(_settings.downloadPath).catchError((Object e) {
+          debugPrint('Could not open the download folder: $e');
+        }));
+      }
     } catch (e) {
-      currentTask!.status = DownloadStatus.error;
-      currentTask!.error = _describeDownloadError(e);
+      task.status = DownloadStatus.error;
+      // Unknown exceptions are shown as text; strip URLs like every other path.
+      task.error = UrlParser.redactUrlsInText(_describeDownloadError(e));
     }
 
     notifyListeners();
+    return task;
   }
 
   /// Appended when the failure that reaches the user (directly, or as the

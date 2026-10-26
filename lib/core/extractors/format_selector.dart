@@ -1,4 +1,4 @@
-import '../../features/download/services/download_service_io.dart';
+import '../../features/download/models/download_models.dart';
 import 'media_models.dart';
 
 /// Result of running [FormatSelector.select] against a [MediaInfo]. Either

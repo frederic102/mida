@@ -1,10 +1,12 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
+import '../extractors/generic/bounded_body.dart';
 import '../extractors/media_models.dart';
 import '../net/host_policy.dart';
+import '../net/per_hop_credentials.dart';
 import '../utils/url_parser.dart';
-import '../../features/download/services/download_service_io.dart';
+import '../../features/download/models/download_models.dart';
 
 class CaptionDownloadException implements Exception {
   final String message;
@@ -47,8 +49,19 @@ class CaptionDownloader {
   /// set this to true.
   final bool allowPrivateHosts;
 
-  CaptionDownloader({HttpClient? httpClient, this.allowPrivateHosts = false})
-      : _httpClient = httpClient ?? HttpClient();
+  /// DNS lookup used by the per-hop public-host check; tests inject a fake.
+  final Future<List<InternetAddress>> Function(String host) _resolveHost;
+
+  /// Caption files are small text; anything bigger is refused (Bulwark r3 M1).
+  static const int maxCaptionBytes = 2 * 1024 * 1024;
+  static const Duration readTimeout = Duration(seconds: 30);
+
+  CaptionDownloader({
+    HttpClient? httpClient,
+    this.allowPrivateHosts = false,
+    Future<List<InternetAddress>> Function(String host)? resolveHost,
+  })  : _httpClient = httpClient ?? HttpClient(),
+        _resolveHost = resolveHost ?? InternetAddress.lookup;
 
   /// Decides which caption track(s) to fetch for the requested
   /// [SubtitleOption] (equivalent to write-subs + write-auto-subs for the
@@ -122,20 +135,38 @@ class CaptionDownloader {
     if (translateTo != null) params['tlang'] = translateTo;
     final vttUri = uri.replace(queryParameters: params);
 
+    var hopIndex = 0;
     final response = await HostPolicy.guardedRequest(
       _httpClient,
       vttUri,
       useHead: false,
-      configureRequest: (request) => headers.forEach(request.headers.set),
+      // Cookie/Authorization only on hops with the caption URL's own origin (Bulwark r3 M1).
+      configureRequest: (request) => PerHopCredentials.apply(request, origin: vttUri, headers: headers),
       allowPrivateHosts: allowPrivateHosts,
+      resolveHost: _resolveHost,
+      onHop: (hop) {
+        // HTTPS on every redirect hop; hop 0 was checked by _requireAllowedUrl.
+        if (hopIndex++ > 0 && hop.scheme != 'https') {
+          throw CaptionDownloadException('Refusing a non-https redirect: ${UrlParser.redactUrlsInText('$hop')}');
+        }
+      },
     );
     if (response.statusCode != 200) {
+      await discardBody(response);
       throw CaptionDownloadException(
-        'HTTP ${response.statusCode} fetching captions from ${UrlParser.stripQuery(uri)}',
+        'HTTP ${response.statusCode} fetching captions from ${UrlParser.redactUrlsInText('$uri')}',
       );
     }
-    final body = await response.transform(utf8.decoder).join();
-    await File(outputPath).writeAsString(body);
+    final BoundedBody body;
+    try {
+      body = await readBoundedBytes(response, maxCaptionBytes).timeout(readTimeout);
+    } on TimeoutException {
+      throw const CaptionDownloadException('The caption server stopped sending the file.');
+    }
+    if (body.truncated) {
+      throw const CaptionDownloadException('The caption file is larger than 2 MiB; refusing it.');
+    }
+    await File(outputPath).writeAsString(body.text);
   }
 
   /// Same https-only policy as [StreamDownloader] ([allowPrivateHosts]
@@ -146,7 +177,7 @@ class CaptionDownloader {
   void _requireAllowedUrl(Uri uri) {
     if (allowPrivateHosts) return;
     if (uri.scheme != 'https') {
-      throw CaptionDownloadException('Refusing a non-https URL: ${UrlParser.stripQuery(uri)}');
+      throw CaptionDownloadException('Refusing a non-https URL: ${UrlParser.redactUrlsInText('$uri')}');
     }
   }
 }

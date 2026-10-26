@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import '../../features/download/services/download_service_io.dart';
+import '../../features/download/models/download_models.dart';
 import '../services/ffmpeg_locator.dart';
 
 class MediaMergeException implements Exception {

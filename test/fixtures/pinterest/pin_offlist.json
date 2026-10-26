@@ -1,0 +1,16 @@
+{
+  "resource_response": {
+    "status": "success",
+    "data": {
+      "id": "6666666666666666",
+      "title": "Hosts",
+      "videos": {"video_list": {
+        "V_HLSV4": {"url": "https://evil.test/hls/x.m3u8", "width": 720, "height": 1280, "duration": 1000},
+        "V_720P": {"url": "https://evil.test/x.mp4", "width": 720, "height": 1280, "duration": 1000},
+        "V_EXP4": {"url": "https://v1.pinimg.com/videos/mc/expmp4/ok/ok.mp4", "width": 540, "height": 960, "duration": 1000},
+        "V_EXP5": {"url": "https://pinimg.com.evil.test/x.mp4", "width": 540, "height": 960}
+      }}
+    },
+    "error": null
+  }
+}

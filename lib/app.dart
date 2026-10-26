@@ -1,29 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'core/services/settings_service.dart';
+import 'features/settings/settings_service.dart';
 import 'shared/theme/app_theme.dart';
 import 'shared/widgets/logo_widget.dart';
 import 'features/download/screens/download_screen.dart';
 import 'features/compress/screens/compress_screen.dart';
 import 'features/extract/screens/extract_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
+import 'features/download/services/download_queue_service.dart';
+import 'features/download/services/download_service.dart';
 
 class MiDaApp extends StatelessWidget {
   const MiDaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SettingsService>(
-      builder: (context, settings, child) {
-        return MaterialApp(
-          title: 'MiDa',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.darkTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: ThemeMode.dark,
-          home: const MainScreen(),
-        );
-      },
+    // GUI-only state lives here rather than in main.dart: the session
+    // download queue that feeds DownloadService.
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (context) => DownloadQueueService(
+            downloads: context.read<DownloadService>(),
+            settings: context.read<SettingsService>(),
+          ),
+        ),
+      ],
+      child: Consumer<SettingsService>(
+        builder: (context, settings, child) {
+          return MaterialApp(
+            title: 'MiDa',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.darkTheme,
+            darkTheme: AppTheme.darkTheme,
+            themeMode: ThemeMode.dark,
+            home: const MainScreen(),
+          );
+        },
+      ),
     );
   }
 }

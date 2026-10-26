@@ -5,16 +5,18 @@ import '../../../core/download/format_capability_resolver.dart';
 import '../../../core/download/format_request_context.dart';
 import '../../../core/download/hls_ffmpeg_downloader.dart';
 import '../../../core/download/media_merger.dart';
+import '../../../core/download/output_stream_prober.dart';
 import '../../../core/download/stream_downloader.dart';
 import '../../../core/extractors/format_selector.dart';
 import '../../../core/extractors/media_models.dart';
+import '../../../core/services/ffmpeg_locator.dart';
 import '../../../core/utils/file_mover.dart';
 import '../../../core/utils/file_utils.dart';
 import 'adaptive_pair_downloader.dart';
 import 'all_format_candidates_failed_exception.dart';
 import 'caption_download_step.dart';
 import 'download_outcome_verifier.dart';
-import 'download_service_io.dart';
+import '../models/download_models.dart';
 import 'single_format_downloader.dart';
 
 /// Orchestrates a single download end to end for any [MediaInfo], no matter
@@ -77,17 +79,23 @@ class MediaDownloadPipeline {
     DownloadOutcomeVerifier? verifier,
     CaptionDownloadStep? captionStep,
     FormatCapabilityResolver? capabilityResolver,
+    Map<String, String>? ffmpegEnvironment,
   })  : _selector = selector,
         _downloaderFactory = downloaderFactory ?? StreamDownloader.new,
-        _hlsDownloader = hlsDownloader ?? HlsFfmpegDownloader(),
-        _merger = merger ?? MediaMerger(),
+        _hlsDownloader = hlsDownloader ?? HlsFfmpegDownloader(ffmpegPathResolver: _ffmpeg(ffmpegEnvironment)),
+        _merger = merger ?? MediaMerger(ffmpegPathResolver: _ffmpeg(ffmpegEnvironment)),
         _fileMover = fileMover ?? FileMover(),
-        _verifier = verifier ?? DownloadOutcomeVerifier(),
+        _verifier = verifier ??
+            DownloadOutcomeVerifier(
+              prober: OutputStreamProber(
+                ffprobePathResolver: () => FfmpegLocator.ffprobePath(environment: ffmpegEnvironment),
+              ),
+            ),
         _capabilityResolver = capabilityResolver ?? const FormatCapabilityResolver(),
         _captionStep = captionStep ??
             CaptionDownloadStep(
               captionDownloader: captionDownloader ?? CaptionDownloader(),
-              merger: merger ?? MediaMerger(),
+              merger: merger ?? MediaMerger(ffmpegPathResolver: _ffmpeg(ffmpegEnvironment)),
             ) {
     _adaptivePairDownloader = AdaptivePairDownloader(
       hlsDownloader: _hlsDownloader,
@@ -101,6 +109,12 @@ class MediaDownloadPipeline {
       fileMover: _fileMover,
     );
   }
+
+  /// ffmpeg lookup for one pipeline. [environment] is the agent CLI's
+  /// per-run environment (it may carry `MIDA_FFMPEG_PATH`); null in the GUI,
+  /// which then ignores that variable (see [FfmpegLocator]).
+  static Future<String> Function() _ffmpeg(Map<String, String>? environment) =>
+      () => FfmpegLocator.ffmpegPath(environment: environment);
 
   /// Runs the full pipeline. [onProgress] receives 0.0-1.0 per attempt
   /// (0-0.9 for the raw download, 0.9-1.0 for merge/convert) and resets to

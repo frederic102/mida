@@ -105,7 +105,7 @@ void main() {
     'open at once across several candidates whose sniffs complete normally (S-R4-2)',
     () async {
       final tracker = _ConcurrencyTracker();
-      final hosts = ['203.0.113.1', '203.0.113.2', '203.0.113.3', '203.0.113.4', '203.0.113.5'];
+      final hosts = ['93.184.217.1', '93.184.217.2', '93.184.217.3', '93.184.217.4', '93.184.217.5'];
       final servers = await Future.wait(List.generate(hosts.length, (_) => _FixtureServer.start(tracker)));
       addTearDown(() async {
         for (final s in servers) {

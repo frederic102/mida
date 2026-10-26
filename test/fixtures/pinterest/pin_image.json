@@ -1,0 +1,14 @@
+{
+  "resource_response": {
+    "status": "success",
+    "data": {
+      "id": "3333333333333333",
+      "title": "Just a picture",
+      "pinner": {"username": "photog"},
+      "images": {"orig": {"url": "https://i.pinimg.com/originals/pic.jpg"}},
+      "videos": null,
+      "story_pin_data": null
+    },
+    "error": null
+  }
+}

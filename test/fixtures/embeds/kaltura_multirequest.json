@@ -1,0 +1,71 @@
+[
+ {
+  "partnerId": 2054321,
+  "ks": "djJ8MjA1NDMyMXxanonymousWidgetKs==",
+  "userId": 0,
+  "objectType": "KalturaStartWidgetSessionResponse"
+ },
+ {
+  "id": "1_ab12cd34",
+  "name": "Lecture 4: Graphs",
+  "duration": 1834,
+  "thumbnailUrl": "https://cfvod.kaltura.com/p/2054321/sp/205432100/thumbnail/entry_id/1_ab12cd34/version/100002",
+  "objectType": "KalturaMediaEntry"
+ },
+ [
+  {
+   "id": "1_src00001",
+   "entryId": "1_ab12cd34",
+   "width": 1920,
+   "height": 1080,
+   "bitrate": 4800,
+   "frameRate": 30,
+   "isOriginal": true,
+   "fileExt": "mp4",
+   "containerFormat": "isom",
+   "videoCodecId": "avc1",
+   "size": 1100000,
+   "status": 2,
+   "tags": "source,web",
+   "objectType": "KalturaFlavorAsset"
+  },
+  {
+   "id": "1_hd000002",
+   "entryId": "1_ab12cd34",
+   "width": 1280,
+   "height": 720,
+   "bitrate": 1800,
+   "frameRate": 30,
+   "fileExt": "mp4",
+   "containerFormat": "isom",
+   "videoCodecId": "avc1",
+   "size": 410000,
+   "status": 2,
+   "tags": "mobile,web,mbr",
+   "objectType": "KalturaFlavorAsset"
+  },
+  {
+   "id": "1_conv0003",
+   "entryId": "1_ab12cd34",
+   "width": 640,
+   "height": 360,
+   "bitrate": 600,
+   "fileExt": "mp4",
+   "status": 1,
+   "tags": "web",
+   "objectType": "KalturaFlavorAsset"
+  },
+  {
+   "id": "1_wvm00004",
+   "entryId": "1_ab12cd34",
+   "width": 1280,
+   "height": 720,
+   "bitrate": 1800,
+   "fileExt": "wvm",
+   "containerFormat": "wvm",
+   "status": 2,
+   "tags": "widevine,widevine_mbr",
+   "objectType": "KalturaFlavorAsset"
+  }
+ ]
+]

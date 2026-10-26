@@ -189,7 +189,8 @@ void main() {
       final redirectServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       redirectServer.listen((request) async {
         request.response.statusCode = 302;
-        request.response.headers.set('Location', 'http://127.0.0.1:${privateTarget.port}/reached');
+        // https, so the private-host guard (not the https-only hop rule) is what refuses it.
+        request.response.headers.set('Location', 'https://127.0.0.1:${privateTarget.port}/reached');
         await request.response.close();
       });
 

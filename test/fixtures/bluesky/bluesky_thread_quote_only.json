@@ -1,0 +1,5 @@
+{"thread":{"$type":"app.bsky.feed.defs#threadViewPost","post":{
+"uri":"at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3kquote333333",
+"author":{"did":"did:plc:z72i7hdynmk6r22z27h6tvur","handle":"alice.bsky.social"},
+"record":{"text":"quoting a video"},
+"embed":{"$type":"app.bsky.embed.record#view","record":{"uri":"at://did:plc:other/app.bsky.feed.post/3kquoted22222","embed":{"$type":"app.bsky.embed.video#view","playlist":"https://video.bsky.app/watch/quoted/video/playlist.m3u8"}}}}}}

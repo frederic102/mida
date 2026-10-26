@@ -2,11 +2,87 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-25
+
+Nothing in this release has been measured live yet: no real-site download,
+no 32-site corpus rerun, and no agent session calling the installed CLI.
+Everything below is covered by offline tests only (fixtures, fake servers,
+fake processes). Treat the new extractors and tiers as unconfirmed until a
+live run says otherwise.
+
+### Added
+- Agent CLI `mida-cli` (`bin/mida_cli.dart`, shipped as `mida-cli.exe` next
+  to `MiDa.exe`): `resolve`, `download`, `sites`, `version`, `help`. stdout is
+  JSON lines only (`status`, `progress`, `result`, `error`), stable exit codes
+  0/2/3/4/5/6/7, plus 8 when the reader closes stdout early (a download
+  that already saved its file still exits 0). `sites` reports
+  `measured_live`, the ids confirmed by a recorded live download; every
+  v2.4.0 addition is absent from it. Every string on stdout
+  passes URL redaction at one choke point; headers, cookies and media URLs
+  are never printed. `MIDA_DEBUG=1` prints the sanitized classification to
+  stderr, never the raw exception.
+- `download` options `--container mp4|webm|mkv`, `--audio-quality
+  best|320|256|128` and `--subtitles ko|en|ko,en`, so every GUI choice has a
+  CLI spelling. `--help` / `-h` (where an option may stand) and `help` print
+  usage and exit 0; `--out help` stays a folder name. `--quiet` and `--json`
+  may come before the command; any option given twice is refused; options
+  that cannot affect the chosen `--type` are reported as `Note:` status
+  lines; `output_path` is always absolute.
+- `resolve` prints selection ids that `download --format-id` accepts: the
+  extractor's id when it is short plain text, else `fmt-<n>`, so a signed
+  URL used as an id is never printed and still selectable.
+- If a detached error ends a CLI run while it is still working, the run
+  stops: exactly one terminal `error`, no later `result`, no file left.
+- Forced headless mode (`--headless`, `MIDA_HEADLESS=1`) for the
+  browser-capture tier, with an honest `HEADLESS_BLOCKED` result instead of
+  any attempt to get past a bot check. Not measured live.
+- Native Facebook extractor (public videos and reels). Not measured live:
+  no Facebook download has been confirmed on a real page yet.
+- Eight more native extractors: Telegram, Rumble, Streamable, Bluesky,
+  Pinterest, SOOP VOD, LinkedIn and Xiaohongshu. Not measured live: each is
+  built and tested against recorded page shapes only.
+- Embedded-player families in the generic tier: JW Player, Brightcove,
+  Kaltura and Wistia, plus delegation of YouTube and Vimeo iframes to their
+  native extractors. Not measured live.
+- GUI download queue: paste several links, they run one after another; the
+  queue is the session history (finished items stay until "Clear finished").
+  "Copy command (PowerShell or bash)" on a finished item gives a line that
+  reproduces the job (type, quality, container, audio format and quality,
+  subtitles, browser login session, folder). The URL and folder are copied
+  byte for byte inside single quotes, which both shells keep literal; cmd.exe
+  is not supported. A URL or folder holding a quote or control character
+  gets no command, and the button says why.
+- "Open folder after download" setting, now persisted. With it on, the folder
+  opens once when the queue finishes with at least one saved file, not once
+  per item.
+- Claude Code skill `.claude/skills/mida-download/SKILL.md` and `AGENTS.md`.
+
 ### Changed
+- The GUI ignores `MIDA_FFMPEG_PATH`; only the CLI reads it, per run, and
+  only as an absolute path. When neither the override nor the bundled copy
+  exists, ffmpeg and ffprobe are looked up in absolute `PATH` directories
+  only, never by bare name (which on Windows would search the working
+  folder first).
+- CLI runs no longer share process-wide state: the ffmpeg environment, the
+  registry builder and the ffprobe step are per call, so two runs in one
+  process cannot see each other's settings.
+- The ffprobe summary after a CLI download is bounded (20 s) and the child
+  is killed on expiry; a finished download is never held back by it.
+- CLI error messages no longer embed OS-localized text: a fixed English
+  sentence plus the OS error number. `ProcessException` maps to
+  `FFMPEG_MISSING`, `BROWSER_MISSING` or `PROCESS_START_FAILED` by program.
+- `SettingsService` moved to `lib/features/settings/`, so `lib/core` has no
+  Flutter import and compiles into the CLI.
 - Dropped the unused `cupertino_icons` package; 9 direct Dart packages remain.
 - README states the measured coverage, the dependency footprint, and that no macOS
   installer has been published. Supported-sites list marks Naver TV as shut down
   (2026-09-30).
+
+### Removed
+- The Settings "Dark Mode" switch. MiDa has only a dark theme, so the switch
+  changed nothing; it is gone instead of pretending.
+- The separate "Download History" list on the download screen (its data was
+  no longer shown); the queue shows the session's finished downloads.
 
 ## [2.3.0] - 2026-09-06
 

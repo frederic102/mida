@@ -57,7 +57,8 @@ void main() {
     // through.
     const nonRetryableFallThroughStatuses = ['CHALLENGE_FAILED', 'PARSE_ERROR'];
     const retryableFallThroughStatuses = ['RATE_LIMITED', 'NETWORK'];
-    const terminalStatuses = ['PRIVATE', 'NOT_FOUND', 'UNSUPPORTED_MEDIA', 'LOGIN_REQUIRED'];
+    // LOGIN_REQUIRED left this list in Phase 7: see the login-wall group below.
+    const terminalStatuses = ['PRIVATE', 'NOT_FOUND', 'UNSUPPORTED_MEDIA'];
 
     /// [platform] (matches only `platform.example`) is registered ahead of
     /// [catchAll] (matches every URL, standing in for `GenericExtractor`),
@@ -283,6 +284,106 @@ void main() {
         registry.resolveInfo(Uri.parse('https://a.example/video')),
         throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NO_MEDIA_FOUND')),
       );
+    });
+  });
+
+  group('ExtractorRegistry.resolveInfo: a platform LOGIN_REQUIRED reaches the browser fallback (Phase 7)', () {
+    const original = MediaExtractionException('LOGIN_REQUIRED', 'Facebook asks to log in to watch this video.');
+    final url = Uri.parse('https://platform.example/video/1');
+
+    /// Platform throws [platformError]; the catch-all and the browser
+    /// fallback run [catchAll]/[browser] (null = throw NO_MEDIA_FOUND).
+    ExtractorRegistry buildRegistry(
+      List<String> calls, {
+      MediaExtractionException platformError = original,
+      Future<MediaInfo> Function(Uri url)? catchAll,
+      Future<MediaInfo> Function(Uri url)? browser,
+    }) {
+      Future<MediaInfo> noMedia(Uri url) async => throw const MediaExtractionException('NO_MEDIA_FOUND', 'nothing on the page');
+      return ExtractorRegistry(
+        [
+          _FakeExtractor('platform', (u) => u.host == 'platform.example', extractFn: (u) async {
+            calls.add('platform');
+            throw platformError;
+          }),
+          _FakeExtractor('catchAll', (u) => true, extractFn: (u) {
+            calls.add('catchAll');
+            return (catchAll ?? noMedia)(u);
+          }),
+        ],
+        fallbacks: [
+          _FakeExtractor('browser', (u) => true, extractFn: (u) {
+            calls.add('browser');
+            return (browser ?? noMedia)(u);
+          }),
+        ],
+        retryPolicy: _hermeticRetryPolicy(),
+        // The browser can carry a signed-in session in this group; the
+        // toggle-off case lives in media_extractor_policy_fold_test.dart.
+        loginSessionAvailable: true,
+      );
+    }
+
+    test('falls through the catch-all to the browser fallback, whose success wins', () async {
+      final calls = <String>[];
+      final registry = buildRegistry(calls, browser: (u) async {
+        return MediaInfo(id: 'browser', title: 'signed-in capture', sourceUrl: u, formats: const [_fakeFormat]);
+      });
+      final info = await registry.resolveInfo(url);
+      expect(info.id, 'browser');
+      // LOGIN_REQUIRED is not retryable: the platform runs once.
+      expect(calls, ['platform', 'catchAll', 'browser']);
+    });
+
+    test('a catch-all success also wins (the browser is never launched)', () async {
+      final calls = <String>[];
+      final registry = buildRegistry(calls, catchAll: (u) async {
+        return MediaInfo(id: 'catchAll', title: 'public embed', sourceUrl: u, formats: const [_fakeFormat]);
+      });
+      expect((await registry.resolveInfo(url)).id, 'catchAll');
+      expect(calls, ['platform', 'catchAll']);
+    });
+
+    test('if every later attempt fails plainly, the ORIGINAL LOGIN_REQUIRED is rethrown', () async {
+      final calls = <String>[];
+      final registry = buildRegistry(calls);
+      // `same`: the very exception the platform threw, not a folded copy.
+      await expectLater(registry.resolveInfo(url), throwsA(same(original)));
+      expect(calls, ['platform', 'catchAll', 'browser']);
+    });
+
+    // Round 3 (Gadfly C7): a browser that carried the session but was itself
+    // refused as a bot surfaces that block (a headed run is the fix).
+    test('a browser HEADLESS_BLOCKED outranks the login wall, login reason folded', () async {
+      final registry = buildRegistry(<String>[], browser: (u) async {
+        throw const MediaExtractionException('HEADLESS_BLOCKED', 'the page looks like a bot-check');
+      });
+      await expectLater(
+        registry.resolveInfo(url),
+        throwsA(isA<MediaExtractionException>()
+            .having((e) => e.status, 'status', 'HEADLESS_BLOCKED')
+            .having((e) => e.reason, 'reason', contains('Facebook asks to log in'))),
+      );
+    });
+
+    test('a fallback that returns zero formats also ends in the original LOGIN_REQUIRED', () async {
+      final calls = <String>[];
+      final registry = buildRegistry(calls, browser: (u) async => MediaInfo(id: 'browser', title: 'empty', sourceUrl: u));
+      await expectLater(registry.resolveInfo(url), throwsA(same(original)));
+      expect(calls, ['platform', 'catchAll', 'browser']);
+    });
+
+    test('NOT_FOUND from the same platform still stops the chain', () async {
+      final calls = <String>[];
+      final registry = buildRegistry(
+        calls,
+        platformError: const MediaExtractionException('NOT_FOUND', 'This video is not available.'),
+      );
+      await expectLater(
+        registry.resolveInfo(url),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NOT_FOUND')),
+      );
+      expect(calls, ['platform']);
     });
   });
 }

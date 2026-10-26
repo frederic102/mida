@@ -1,0 +1,11 @@
+{
+  "resource_response": {
+    "status": "success",
+    "data": {
+      "id": "5555555555555555",
+      "title": "Protected",
+      "videos": {"video_list": {"V_HLSV4": {"url": "https://v1.pinimg.com/videos/mc/hls/dr/m0/drm_master.m3u8", "width": 720, "height": 1280, "duration": 3000}}}
+    },
+    "error": null
+  }
+}

@@ -1,11 +1,12 @@
 [Setup]
 AppName=MiDa
-AppVersion=2.3.0
+AppVersion=2.4.0
 AppPublisher=frederic102
+ArchitecturesInstallIn64BitMode=x64compatible
 DefaultDirName={autopf}\MiDa
 DefaultGroupName=MiDa
 OutputDir=dist\windows
-OutputBaseFilename=MiDa_Setup_v2.3.0
+OutputBaseFilename=MiDa_Setup_v2.4.0
 Compression=lzma
 SolidCompression=yes
 UninstallDisplayIcon={app}\MiDa.exe
@@ -15,6 +16,7 @@ Source: "dist\windows\MiDa.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\windows\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\windows\url_launcher_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\windows\desktop_drop_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\windows\mida-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\windows\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\windows\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\windows\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs

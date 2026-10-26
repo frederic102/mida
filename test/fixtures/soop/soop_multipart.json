@@ -1,0 +1,13 @@
+{
+  "result": 1,
+  "data": {
+    "title_no": "222333444",
+    "title": "Long marathon",
+    "writer_nick": "MarathonBJ",
+    "total_file_duration": 7200000,
+    "files": [
+      {"file": "https://vod-archive.sooplive.co.kr/vod/mp1/playlist.m3u8", "duration": 3600000},
+      {"file": "https://vod-archive.sooplive.co.kr/vod/mp2/playlist.m3u8", "duration": 3600000}
+    ]
+  }
+}

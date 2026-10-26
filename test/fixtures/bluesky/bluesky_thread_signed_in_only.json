@@ -1,0 +1,5 @@
+{"thread":{"$type":"app.bsky.feed.defs#threadViewPost","post":{
+"uri":"at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3khidden55555",
+"author":{"did":"did:plc:z72i7hdynmk6r22z27h6tvur","handle":"alice.bsky.social","labels":[{"val":"!no-unauthenticated","src":"did:plc:z72i7hdynmk6r22z27h6tvur"}]},
+"record":{"text":"members only"},
+"embed":{"$type":"app.bsky.embed.video#view","playlist":"https://video.bsky.app/watch/x/y/playlist.m3u8"}}}}

@@ -1,0 +1,6 @@
+{"status":2,"percent":100,"url":"streamable.com/abc12","title":"Demo goal","message":null,
+"thumbnail_url":"//cdn-cf-east.streamable.com/image/abc12.jpg?Expires=1&Signature=s",
+"files":{
+"mp4":{"status":2,"url":"//cdn-cf-east.streamable.com/video/mp4/abc12.mp4?Expires=1&Signature=a","framerate":30,"height":720,"width":1280,"bitrate":2500000,"size":3500000,"duration":12.48},
+"mp4-mobile":{"status":2,"url":"//cdn-cf-east.streamable.com/video/mp4-mobile/abc12.mp4?Expires=1&Signature=b","framerate":30,"height":360,"width":640,"bitrate":800000,"size":1100000,"duration":12.48},
+"original":{"status":2,"url":"//cdn-cf-east.streamable.com/video/original/abc12.mov","height":1080,"width":1920}}}

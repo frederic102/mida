@@ -1,0 +1,8 @@
+{"title":"Demo clip","author":{"name":"Demo Channel","url":"https://rumble.com/c/Demo"},"i":"https://1a-1791.com/video/fww1/aa/s8/1/demo.jpg","duration":125,"live":0,"fps":30,
+"u":{"mp4":{"url":"https://1a-1791.com/video/fww1/u/demo_u.mp4","meta":{"bitrate":900,"size":1000,"w":640,"h":360}}},
+"ua":{
+"mp4":{"360":{"url":"https://1a-1791.com/video/fww1/aa/demo_360.mp4?r_file=a.mp4","meta":{"bitrate":900,"size":14100000,"w":640,"h":360}},
+"720":{"url":"https://1a-1791.com/video/fww1/aa/demo_720.mp4","meta":{"bitrate":2500,"size":39000000,"w":1280,"h":720}},
+"1080":{"url":"https://1a-1791.com/video/fww1/aa/demo_1080.mp4","meta":{"bitrate":5000,"size":78000000,"w":1920,"h":1080}}},
+"webm":{"480":{"url":"https://1a-1791.com/video/fww1/aa/demo_480.webm","meta":{"bitrate":1200,"size":20000000,"w":854,"h":480}}},
+"hls":{"auto":{"url":"https://sp.rmbl.ws/s8/2/demo/playlist.m3u8","meta":{}}}}}

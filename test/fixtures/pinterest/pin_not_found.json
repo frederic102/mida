@@ -1,0 +1,7 @@
+{
+  "resource_response": {
+    "status": "failure",
+    "data": null,
+    "error": {"http_status": 404, "code": 3, "message": "Pin not found", "message_detail": "Pin not found"}
+  }
+}

@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../../core/services/settings_service.dart';
+import '../../../cli/cli_version.dart';
+import '../settings_service.dart';
 import '../../../core/services/platform_service.dart';
 import '../../../core/utils/file_utils.dart';
+import '../widgets/downloads_settings_section.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -25,7 +27,7 @@ class SettingsScreen extends StatelessWidget {
               children: [
                 _buildStorageSection(context, settings),
                 const SizedBox(height: 24),
-                _buildAppearanceSection(context, settings),
+                const DownloadsSettingsSection(),
                 const SizedBox(height: 24),
                 _buildBrowserSessionSection(context, settings),
                 const SizedBox(height: 24),
@@ -107,43 +109,6 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAppearanceSection(
-      BuildContext context, SettingsService settings) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.palette,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Appearance',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            SwitchListTile(
-              title: const Text('Dark Mode'),
-              subtitle: const Text('Use dark theme'),
-              value: settings.isDarkMode,
-              onChanged: (value) => settings.setDarkMode(value),
-              secondary: Icon(
-                settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildBrowserSessionSection(BuildContext context, SettingsService settings) {
     return Card(
       child: Padding(
@@ -218,7 +183,7 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               title: const Text('MiDa'),
-              subtitle: const Text('Version 2.2.0'),
+              subtitle: const Text('Version $midaCliVersion'),
             ),
             const Divider(),
             ListTile(
@@ -278,18 +243,24 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _openDownloadFolder(String path) async {
-    final directory = Directory(path);
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
-    }
-
-    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-      await FileUtils.openFolder(path);
-    } else {
-      final uri = Uri.directory(path);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
+    // Called from a button without await: a missing folder we cannot create
+    // or a file manager that fails to start must not be an unhandled error.
+    try {
+      final directory = Directory(path);
+      if (!await directory.exists()) {
+        await directory.create(recursive: true);
       }
+
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        await FileUtils.openFolder(path);
+      } else {
+        final uri = Uri.directory(path);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri);
+        }
+      }
+    } catch (e) {
+      debugPrint('Could not open the download folder: $e');
     }
   }
 }

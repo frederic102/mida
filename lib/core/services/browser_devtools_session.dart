@@ -95,7 +95,8 @@ class BrowserDevtoolsSession implements DevtoolsSession {
   /// back to `--headless=new` if that attempt itself fails to come up at
   /// all, or is skipped upfront when [preferHeaded] is false or this
   /// process has no interactive desktop session at all (see
-  /// [InteractiveSessionDetector]) - see [BrowserLaunchArgs] for why headed
+  /// [InteractiveSessionDetector]) or `MIDA_HEADLESS=1` is set in
+  /// [environment] (defaults to the process environment) - see [BrowserLaunchArgs] for why headed
   /// is the default otherwise. This is strictly about whether the
   /// *browser process and CDP session* come up; it has nothing to do with
   /// whether a given page later turns out to have media (a caller
@@ -107,6 +108,7 @@ class BrowserDevtoolsSession implements DevtoolsSession {
     bool useBrowserLoginSession = false,
     bool preferHeaded = true,
     Future<Directory?> Function(BrowserProfileKind kind)? stageProfileDir,
+    Map<String, String>? environment,
   }) async {
     // Fire-and-forget: a slow/locked temp dir must never add latency to
     // this capture's own launch.
@@ -122,7 +124,7 @@ class BrowserDevtoolsSession implements DevtoolsSession {
       );
     }
 
-    if (!preferHeaded || !InteractiveSessionDetector.hasInteractiveSession()) {
+    if (!InteractiveSessionDetector.shouldTryHeaded(preferHeaded: preferHeaded, environment: environment)) {
       return _launchAttempt(
         executable,
         headed: false,

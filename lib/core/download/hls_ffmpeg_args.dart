@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import '../utils/mida_log.dart';
 
 /// Thrown by [HlsFfmpegArgs.build] when a header name is not a valid RFC
 /// 7230 token, or when a header value carries a CR or LF: passed through
@@ -81,7 +81,7 @@ class HlsFfmpegArgs {
     final allowedProtocols = ['https', 'tcp', 'tls', 'crypto'];
     if (scheme == 'http') {
       allowedProtocols.insert(0, 'http');
-      debugPrint('HlsFfmpegDownloader: manifest URL is plain http; allowing "http" in -protocol_whitelist: $url');
+      midaLog('HlsFfmpegDownloader: manifest URL is plain http; allowing "http" in -protocol_whitelist: $url');
     }
     final args = <String>['-y', '-protocol_whitelist', allowedProtocols.join(',')];
 

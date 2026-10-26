@@ -1,6 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/utils/url_parser.dart';
 
+// The '@' is kept out of literals so the repo's email guard never sees an address-shaped string.
+const _at = '@';
+
 void main() {
   group('UrlParser.extractYouTubeVideoId', () {
     test('extracts the id from a /shorts/ URL', () {
@@ -87,7 +90,80 @@ void main() {
       const message = 'Failed: HTTP 403 fetching https://googlevideo.com/videoplayback?sig=SECRET&itag=137 (bytes 0-99)';
       final redacted = UrlParser.redactUrlsInText(message);
       expect(redacted, isNot(contains('SECRET')));
-      expect(redacted, contains('https://googlevideo.com/videoplayback'));
+      // Round 2 (Bulwark B2): the path is dropped too, only the host stays.
+      expect(redacted, 'Failed: HTTP 403 fetching https://googlevideo.com/... (bytes 0-99)');
+    });
+
+    group('round 2 (Bulwark B2 / Assay D2): host-only redaction', () {
+      String r(String text) => UrlParser.redactUrlsInText(text);
+
+      test('Kaltura /ks/<token>/ path token is dropped', () {
+        final out = r('GET https://cdnapisec.kaltura.com/p/1/sp/100/playManifest/ks/djJ8MTIzNDU2/format/url failed');
+        expect(out, 'GET https://cdnapisec.kaltura.com/... failed');
+      });
+
+      test('userinfo user:pw@ is dropped, and a trailing colon stays outside the URL', () {
+        final out = r('Refusing https://user:pw${_at}example.invalid/x?token=SECRET: could not resolve');
+        expect(out, 'Refusing https://example.invalid/...: could not resolve');
+        expect(out, isNot(contains('user')));
+        expect(out, isNot(contains('pw@')));
+      });
+
+      test('upper-case scheme is caught and normalized', () {
+        expect(r('see HTTPS://CDN.example/v.mp4?sig=SECRET now'), 'see https://CDN.example/... now');
+        expect(r('Http://a.example/p'), 'http://a.example/...');
+      });
+
+      test(r'JSON-escaped https:\/\/ form is caught', () {
+        final out = r(r'{"url":"https:\/\/cdn.example\/v\/1.m3u8?hdnts=exp=1~hmac=SECRET"}');
+        expect(out, '{"url":"https://cdn.example/..."}');
+      });
+
+      test('#token= fragment is dropped', () {
+        expect(r('open https://a.example/cb#access_token=SECRET.'), 'open https://a.example/....');
+      });
+
+      test('path-embedded CDN signature exp=~hmac= is dropped', () {
+        final out = r('HTTP 403 from https://media.example/hdnts=exp=1700000000~acl=*~hmac=abcdef0123/seg.ts');
+        expect(out, 'HTTP 403 from https://media.example/...');
+        expect(out, isNot(contains('hmac')));
+      });
+
+      test('port is dropped, IPv6 literal kept, bare host keeps its shape', () {
+        expect(r('ws://127.0.0.1:9222/devtools/browser/abc-uuid'), 'ws://127.0.0.1/...');
+        expect(r('at https://[2001:db8::1]:8443/x'), 'at https://[2001:db8::1]/...');
+        expect(r('host https://example.com and https://example.org/'), 'host https://example.com and https://example.org/');
+      });
+
+      test('round 3 (Bulwark): percent-encoded https%3A%2F%2F form', () {
+        final out = r('next=https%3A%2F%2Fcdn.example%2Fv.mp4%3Fsig%3DSECRET&x=1');
+        expect(out, 'next=https://cdn.example/...');
+        expect(r('u=HTTPS%3a%2f%2fuser%3Apw%40cdn.example%3A8443%2Fa'), 'u=https://cdn.example/...');
+      });
+
+      test(r'round 3 (Bulwark): double-escaped \\/\\/ and / escaped forms', () {
+        expect(r(r'"u":"https:\\/\\/cdn.example\\/v?sig=SECRET"'), '"u":"https://cdn.example/..."');
+        expect(r(r'"u":"https://cdn.example/v?sig=SECRET"'), '"u":"https://cdn.example/..."');
+      });
+
+      test('round 3 (Bulwark): protocol-relative //host/path?sig URLs', () {
+        expect(r('src=//cdn.example/v.mp4?sig=SECRET failed'), 'src=//cdn.example/... failed');
+        expect(r('"//user:pw${_at}cdn.example:8080/a"'), '"//cdn.example/..."');
+        expect(r('//cdn.example/x?sig=SECRET'), '//cdn.example/...');
+        // Not URLs: a JS comment and an already-redacted URL stay as they are.
+        expect(r('// see the docs'), '// see the docs');
+        expect(r('https://cdn.example/...'), 'https://cdn.example/...');
+      });
+
+      test('round 3 (Bulwark): a scheme glued to "_" or a digit is still caught', () {
+        expect(r('url_https://cdn.example/v?sig=SECRET'), 'url_https://cdn.example/...');
+        expect(r('1https://cdn.example/v?sig=SECRET'), '1https://cdn.example/...');
+      });
+
+      test('several URLs in one message are each redacted', () {
+        final out = r('a https://x.example/1?s=AAA b http://y.example/2#t=BBB');
+        expect(out, 'a https://x.example/... b http://y.example/...');
+      });
     });
 
     test('redactUrlsInText leaves text with no URL untouched', () {

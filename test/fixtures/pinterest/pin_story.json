@@ -1,0 +1,30 @@
+{
+  "resource_response": {
+    "status": "success",
+    "data": {
+      "id": "2222222222222222",
+      "title": "",
+      "grid_title": null,
+      "description": "Story pin about a garden\nmore text",
+      "pinner": {"username": "gardener", "full_name": ""},
+      "images": {"736x": {"url": "https://i.pinimg.com/736x/cc/dd/story736.jpg"}},
+      "videos": null,
+      "story_pin_data": {
+        "pages": [
+          {"blocks": [{"type": "story_pin_image_block", "image": {"images": {"orig": {"url": "https://i.pinimg.com/originals/p1.jpg"}}}}]},
+          {"blocks": [
+            {"type": "story_pin_video_block", "video": {"video_list": {
+              "V_EXP7": {"url": "https://v1.pinimg.com/videos/mc/expmp4/ee/ff/story_p2.mp4", "width": 1080, "height": 1920, "duration": 15000}
+            }}}
+          ]},
+          {"blocks": [
+            {"type": "story_pin_video_block", "video": {"video_list": {
+              "V_EXP7": {"url": "https://v1.pinimg.com/videos/mc/expmp4/ee/ff/story_p3_must_not_be_used.mp4", "width": 640, "height": 360, "duration": 9000}
+            }}}
+          ]}
+        ]
+      }
+    },
+    "error": null
+  }
+}

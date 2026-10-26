@@ -1,0 +1,5 @@
+{"thread":{"$type":"com.evil.defs#threadViewPost","post":{
+"uri":"at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3klookalike66",
+"author":{"did":"did:plc:z72i7hdynmk6r22z27h6tvur","handle":"alice.bsky.social"},
+"record":{"text":"look-alike envelope"},
+"embed":{"$type":"app.bsky.embed.video#view","playlist":"https://video.bsky.app/watch/evil/evil/playlist.m3u8"}}}}

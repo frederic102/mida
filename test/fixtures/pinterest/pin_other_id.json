@@ -1,0 +1,11 @@
+{
+  "resource_response": {
+    "status": "success",
+    "data": {
+      "id": "9999999999999999",
+      "title": "A different pin",
+      "videos": {"video_list": {"V_720P": {"url": "https://v1.pinimg.com/videos/mc/720p/zz/other.mp4", "width": 720, "height": 720, "duration": 1000}}}
+    },
+    "error": null
+  }
+}

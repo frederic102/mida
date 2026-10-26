@@ -1,0 +1,7 @@
+{"thread":{"$type":"app.bsky.feed.defs#threadViewPost","post":{
+"uri":"at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3kxyzabcd2345","cid":"bafyreipost",
+"author":{"did":"did:plc:z72i7hdynmk6r22z27h6tvur","handle":"alice.bsky.social","displayName":"Alice Example","labels":[]},
+"record":{"$type":"app.bsky.feed.post","text":"Look at this clip\nsecond line of the post","createdAt":"2026-10-01T10:00:00.000Z"},
+"embed":{"$type":"app.bsky.embed.video#view","cid":"bafkreivideo","playlist":"https://video.bsky.app/watch/did%3Aplc%3Az72i7hdynmk6r22z27h6tvur/bafkreivideo/playlist.m3u8","thumbnail":"https://video.bsky.app/watch/did%3Aplc%3Az72i7hdynmk6r22z27h6tvur/bafkreivideo/thumbnail.jpg","aspectRatio":{"width":1280,"height":720}},
+"labels":[]},
+"replies":[{"$type":"app.bsky.feed.defs#threadViewPost","post":{"uri":"at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3kreplyaaaaa2","author":{"did":"did:plc:z72i7hdynmk6r22z27h6tvur","handle":"alice.bsky.social"},"record":{"text":"reply"},"embed":{"$type":"app.bsky.embed.video#view","playlist":"https://video.bsky.app/watch/other/reply/playlist.m3u8"}}}]}}

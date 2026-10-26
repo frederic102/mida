@@ -7,7 +7,7 @@ import '../../../core/download/stream_downloader.dart';
 import '../../../core/extractors/format_selector.dart';
 import '../../../core/extractors/media_models.dart';
 import '../../../core/utils/file_utils.dart';
-import 'download_service_io.dart';
+import '../models/download_models.dart';
 
 /// Downloads and merges an adaptive video+audio pair, split out of
 /// `MediaDownloadPipeline` to keep that file under the project's 400-line

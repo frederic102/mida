@@ -3,6 +3,7 @@ import 'browser_capture/browser_capture_extractor.dart';
 import 'chzzk/chzzk_extractor.dart';
 import 'dailymotion/dailymotion_extractor.dart';
 import 'douyin/douyin_extractor.dart';
+import 'facebook/facebook_extractor.dart';
 import 'generic/generic_extractor.dart';
 import 'instagram/instagram_extractor.dart';
 import 'kakao/kakao_extractor.dart';
@@ -17,6 +18,14 @@ import 'tiktok/tiktok_extractor.dart';
 import 'twitch/twitch_extractor.dart';
 import 'twitter/twitter_extractor.dart';
 import 'youtube/youtube_extractor.dart';
+import 'pinterest/pinterest_extractor.dart';
+import 'soop/soop_extractor.dart';
+import 'linkedin/linkedin_extractor.dart';
+import 'xiaohongshu/xiaohongshu_extractor.dart';
+import 'telegram/telegram_extractor.dart';
+import 'rumble/rumble_extractor.dart';
+import 'streamable/streamable_extractor.dart';
+import 'bluesky/bluesky_extractor.dart';
 
 /// Single place that decides extractor order for every URL MiDa is asked to
 /// handle, per `docs/plan-phase2b-wiring.md`. Order: platform-native
@@ -31,7 +40,7 @@ import 'youtube/youtube_extractor.dart';
 /// `ExtractorRegistry.resolveInfo` (`media_extractor.dart`); this function
 /// only builds the ordered list.
 ///
-/// As of Phase 5 (`docs/plan-phase5-coverage.md`) this list has 15
+/// As of Phase 7 (`docs/plan-phase7-coverage-agent.md`) this list has 25
 /// platform-native extractors ahead of Generic. See
 /// `docs/supported-sites.md` for the current, human-readable list of what
 /// each one covers and what still falls through to Generic/BrowserCapture
@@ -46,7 +55,14 @@ import 'youtube/youtube_extractor.dart';
 /// (YouTube/Twitter/TikTok/Instagram) never get a cookie injected directly
 /// and instead fall through to `BrowserCaptureExtractor` when they need the
 /// login benefit.
-ExtractorRegistry buildExtractorRegistry({bool useBrowserLoginSession = false}) {
+/// `forceHeadless` is the Phase 7 agent/CLI contract (docs/plan-phase7-coverage-agent.md
+/// Lane H): when true the browser-capture tier never opens a headed window
+/// (one headless attempt, `HEADLESS_BLOCKED` on a challenge page). It is
+/// passed straight through to `BrowserCaptureExtractor` and `GenericExtractor`.
+ExtractorRegistry buildExtractorRegistry({
+  bool useBrowserLoginSession = false,
+  bool forceHeadless = false,
+}) {
   return ExtractorRegistry(
     [
       YoutubeExtractor(),
@@ -65,8 +81,22 @@ ExtractorRegistry buildExtractorRegistry({bool useBrowserLoginSession = false}) 
       NiconicoExtractor(),
       OdyseeExtractor(),
       VimeoExtractor(),
-      GenericExtractor(useBrowserLoginSession: useBrowserLoginSession),
+      FacebookExtractor(),
+      PinterestExtractor(),
+      SoopExtractor(),
+      LinkedInExtractor(),
+      XiaohongshuExtractor(),
+      TelegramExtractor(),
+      RumbleExtractor(),
+      StreamableExtractor(),
+      BlueskyExtractor(),
+      GenericExtractor(useBrowserLoginSession: useBrowserLoginSession, forceHeadless: forceHeadless),
     ],
-    fallbacks: [BrowserCaptureExtractor(useBrowserLoginSession: useBrowserLoginSession)],
+    fallbacks: [
+      BrowserCaptureExtractor(useBrowserLoginSession: useBrowserLoginSession, forceHeadless: forceHeadless),
+    ],
+    // A platform LOGIN_REQUIRED only reaches the browser fallback when that
+    // browser can carry the user's session (Gadfly G2).
+    loginSessionAvailable: useBrowserLoginSession,
   );
 }

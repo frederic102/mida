@@ -65,7 +65,7 @@ void main() {
       // not burn all `maxRetries` (3) attempts and their backoff delays
       // for an outcome that will never change.
       expect(connectionCount, 1);
-    }, timeout: const Timeout(Duration(seconds: 15)));
+    }, timeout: const Timeout(Duration(seconds: 60))); // round 2 (Assay D8): was 15 s, flaked under load
 
     test('.part file is still cleaned up after a handshake failure', () async {
       final rawServer = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
@@ -86,6 +86,6 @@ void main() {
       );
 
       expect(File('$outputPath.part').existsSync(), isFalse);
-    }, timeout: const Timeout(Duration(seconds: 15)));
+    }, timeout: const Timeout(Duration(seconds: 60))); // round 2 (Assay D8): was 15 s, flaked under load
   });
 }

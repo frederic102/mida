@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/media_extractor.dart';
 import 'package:mida/core/extractors/media_models.dart';
 import 'package:mida/core/net/retry_policy.dart';
-import 'package:mida/core/services/settings_service.dart';
+import 'package:mida/features/settings/settings_service.dart';
 import 'package:mida/core/utils/file_utils.dart';
 import 'package:mida/features/download/services/download_service_io.dart';
 

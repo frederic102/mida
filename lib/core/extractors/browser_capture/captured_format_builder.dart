@@ -1,8 +1,7 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import '../../net/host_policy.dart';
+import '../generic/bounded_body.dart';
 import '../generic/hls_master_format_mapper.dart';
 import '../media_models.dart';
 import 'captured_media_classifier.dart';
@@ -104,48 +103,12 @@ class CapturedFormatBuilder {
         allowPrivateHosts: allowPrivateHosts,
         configureRequest: (request) => headers.forEach(request.headers.set),
       );
-      final bytes = await _readBounded(client, response);
-      try {
-        return utf8.decode(bytes);
-      } on FormatException {
-        return latin1.decode(bytes);
-      }
+      // Shared bounded reader (Vigil L1): stops at [_maxManifestBytes] and
+      // abandons the rest; the finally below force-closes the client.
+      return (await readBoundedBytes(response, _maxManifestBytes)).text;
     } finally {
       client.close(force: true);
     }
-  }
-
-  /// Streams [response] into memory up to [_maxManifestBytes]. The moment
-  /// that cap would be crossed, the subscription is cancelled and [client]
-  /// is force-closed right there - not after draining the rest of the body
-  /// first - so an oversized response stops costing bytes/sockets the
-  /// instant it is detected, rather than being read to completion and
-  /// merely truncated afterward.
-  Future<List<int>> _readBounded(HttpClient client, HttpClientResponse response) async {
-    final bytes = <int>[];
-    final completer = Completer<void>();
-    late final StreamSubscription<List<int>> subscription;
-    subscription = response.listen(
-      (chunk) {
-        final remaining = _maxManifestBytes - bytes.length;
-        if (remaining <= 0) return; // already at cap; any further chunk is dropped
-        bytes.addAll(remaining >= chunk.length ? chunk : chunk.sublist(0, remaining));
-        if (bytes.length >= _maxManifestBytes) {
-          subscription.cancel();
-          client.close(force: true);
-          if (!completer.isCompleted) completer.complete();
-        }
-      },
-      onDone: () {
-        if (!completer.isCompleted) completer.complete();
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        if (!completer.isCompleted) completer.completeError(error, stackTrace);
-      },
-      cancelOnError: true,
-    );
-    await completer.future;
-    return bytes;
   }
 
   MediaFormat _formatFor({

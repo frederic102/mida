@@ -1,0 +1,40 @@
+[
+ {
+  "partnerId": 2054321,
+  "ks": "djJ8MjA1NDMyMXxanonymousWidgetKs==",
+  "userId": 0,
+  "objectType": "KalturaStartWidgetSessionResponse"
+ },
+ {
+  "id": "1_ab12cd34",
+  "name": "Protected lecture",
+  "duration": 600,
+  "objectType": "KalturaMediaEntry"
+ },
+ [
+  {
+   "id": "1_wvm00004",
+   "entryId": "1_ab12cd34",
+   "width": 1280,
+   "height": 720,
+   "bitrate": 1800,
+   "fileExt": "wvm",
+   "containerFormat": "wvm",
+   "status": 2,
+   "tags": "widevine,widevine_mbr",
+   "objectType": "KalturaFlavorAsset"
+  },
+  {
+   "id": "1_wvm00005",
+   "entryId": "1_ab12cd34",
+   "width": 640,
+   "height": 360,
+   "bitrate": 1800,
+   "fileExt": "wvm",
+   "containerFormat": "wvm",
+   "status": 2,
+   "tags": "widevine",
+   "objectType": "KalturaFlavorAsset"
+  }
+ ]
+]

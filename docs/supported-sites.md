@@ -1,6 +1,6 @@
 # Supported Sites
 
-Last updated 2026-10-25 (v2.3.0). This list reflects what is registered in
+Last updated 2026-10-25 (v2.4.0). This list reflects what is registered in
 `lib/core/extractors/extractor_registry_builder.dart` and what MiDa's
 generic/browser-capture tiers can reach today. Sites change their pages and
 anti-bot layers without notice, so treat this as a snapshot, not a promise.
@@ -28,7 +28,16 @@ most reliable path, and are tried before generic page analysis.
 | Douyin | `douyin.com/video/<id>` | |
 | Niconico | `nicovideo.jp/watch/<id>` | |
 | Odysee | `odysee.com/@channel/video` | |
-| Vimeo | `vimeo.com/<id>`, `vimeo.com/<id>/<unlisted hash>`, `player.vimeo.com/video/<id>` | Progressive mp4 and an HLS master, read from the same unauthenticated player-config endpoint Vimeo's own web player calls. A private/unlisted video without the right hash is reported as login required rather than attempted. |
+| Vimeo | `vimeo.com/<id>`, `vimeo.com/<id>/<unlisted hash>`, `player.vimeo.com/video/<id>` | Progressive mp4 and an HLS master, read from the same unauthenticated player-config endpoint Vimeo's own web player calls. A private/unlisted video without the right hash is a login wall: it falls through to generic analysis and browser capture (which can use your signed-in browser when the "Use browser login session" toggle is on), and if those fail too it is reported as login required. |
+| Facebook | `facebook.com/<page>/videos/<id>`, `/watch/?v=<id>`, `/reel/<id>`, `/share/v/<slug>`, `fb.watch/<slug>` | Public videos only, read from the server-rendered data Facebook's own web player starts from (no cookies sent). A login wall falls through to generic analysis and browser capture; turn on the "Use browser login session" toggle for videos that need a signed-in browser. The page shapes are taken from public notes and are not yet confirmed live. |
+| Pinterest | `pinterest.<tld>/pin/<id>/`, `pin.it/<code>` | Video pins and story pins (first video block only) via the anonymous pin resource call. Image pins report "no video". Short links may only lead to a Pinterest pin. Not yet confirmed live. |
+| SOOP (AfreecaTV) | `vod.sooplive.co.kr/player/<n>`, `vod.afreecatv.com/player/<n>` | VOD only, no live streams. A multi-part VOD returns part 1 only, marked "(part 1 of N)" in the title. Adult, password and members-only VODs need a login session. Not yet confirmed live. |
+| LinkedIn | `linkedin.com/posts/<slug>`, `linkedin.com/feed/update/urn:li:activity:<id>`, `linkedin.com/embed/feed/update/...` | Public video posts only. Learning courses, profiles and posts behind the sign-in wall are not supported (LinkedIn's anonymous wall falls through to the browser tier). Not yet confirmed live. |
+| Xiaohongshu (RedNote) | `xiaohongshu.com/explore/<id>`, `xiaohongshu.com/discovery/item/<id>`, `xhslink.com/<code>` | Video notes only. Image-only notes report "no video". An empty note shell is treated as a bot wall and falls through to the browser tier. Share links should keep their `xsec_token`. Not yet confirmed live. |
+| Telegram | `t.me/<channel>/<id>`, `t.me/s/<channel>/<id>` | Public channel posts only, read from the same embed page Telegram's own "Embed post" widget loads (no login, no cookies). In an album only the video of the linked post is returned, a post with several videos gives the first, and a channel page shown instead of the post falls through to the other tiers, and only an explicit private message reports login required. Not yet confirmed live. |
+| Rumble | `rumble.com/<slug>.html`, `rumble.com/embed/<id>` | Mp4/webm renditions per height plus the HLS stream, from the same data call Rumble's own embed player makes (no cookies sent). Live streams without a recording and DRM are reported, not bypassed. Not yet confirmed live. |
+| Streamable | `streamable.com/<code>`, `streamable.com/e/<code>` | `mp4` and `mp4-mobile`, from the API Streamable's own player calls. A video that is still processing says so and can be retried. Not yet confirmed live. |
+| Bluesky | `bsky.app/profile/<handle-or-did>/post/<rkey>` | Video posts only (HLS), from the public read-only API the Bluesky web app uses (no account). Accounts hidden from signed-out viewers and blocked posts report login required (the other tiers are still tried); only a genuinely deleted post reports not found. Not yet confirmed live. |
 
 ## Other sites
 

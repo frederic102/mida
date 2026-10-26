@@ -34,7 +34,6 @@
 *.zip
 *.pkg
 *.msi
-installer.iss
 
 # OS
 .DS_Store
@@ -47,7 +46,11 @@ Thumbs.db
 *.key
 
 # Misc
-.claude/
+.claude/*
+!.claude/skills/
 /flutter/
 /web/
 /mida-video/
+
+# Flutter crash logs
+flutter_*.log

@@ -1,7 +1,8 @@
 import 'dart:io';
 
 import '../extractors/media_models.dart';
-import '../net/cookie_scope.dart';
+import '../extractors/generic/bounded_body.dart';
+import '../net/per_hop_credentials.dart';
 import '../net/host_policy.dart';
 import '../utils/file_mover.dart';
 import '../utils/url_parser.dart';
@@ -52,6 +53,9 @@ class StreamDownloader {
 
   static const int _maxRedirectHops = 5;
 
+  /// DNS lookup for the resolved-address check on every hop; tests inject a fake.
+  final Future<List<InternetAddress>> Function(String host) _resolveHost;
+
   StreamDownloader({
     HttpClient? httpClient,
     this.chunkSize = 10 * 1024 * 1024,
@@ -59,7 +63,9 @@ class StreamDownloader {
     Duration Function(int attempt)? backoff,
     this.allowPrivateHosts = false,
     FileMover? fileMover,
+    Future<List<InternetAddress>> Function(String host)? resolveHost,
   })  : _httpClient = httpClient ?? HttpClient(),
+        _resolveHost = resolveHost ?? InternetAddress.lookup,
         backoff = backoff ?? _defaultBackoff,
         _fileMover = fileMover ?? FileMover() {
     _body = StreamBodyWriter(
@@ -174,20 +180,16 @@ class StreamDownloader {
     HttpClientResponse? response;
 
     for (var hop = 0; hop <= _maxRedirectHops; hop++) {
-      _requireAllowedUrl(uri, exempt: allowPrivateHosts && hop == 0);
+      await _requireAllowedUrl(uri, exempt: allowPrivateHosts && hop == 0);
 
       final request = await _httpClient.getUrl(uri);
       request.followRedirects = false;
-      headers.forEach(request.headers.set);
       // Recomputed per hop (not once up front): a redirect can land on a
-      // different host than [url] itself, and [headers]'s own `Cookie` (if
-      // any - `MediaInfo.requestHeaders`'s fallback for every extractor
-      // that has not adopted [cookiesByDomain] yet) must not simply ride
-      // along onto that new host unexamined.
-      if (cookiesByDomain != null) {
-        final scoped = CookieScope.headerFor(uri, cookiesByDomain);
-        if (scoped.isNotEmpty) request.headers.set('Cookie', scoped);
-      }
+      // different origin than [url] itself, and [headers]'s flat `Cookie` /
+      // `Authorization` (`MediaInfo.requestHeaders`'s fallback for extractors
+      // without [cookiesByDomain]) must not ride along onto it (Bulwark r3
+      // M2). Only cookies `CookieScope` scopes to this hop travel there.
+      PerHopCredentials.apply(request, origin: Uri.parse(url), headers: headers, cookiesByDomain: cookiesByDomain);
       if (start != null && end != null) {
         request.headers.set('Range', 'bytes=$start-$end');
       }
@@ -197,7 +199,7 @@ class StreamDownloader {
       final isRedirect = response.statusCode >= 300 && response.statusCode < 400 && location != null;
       if (!isRedirect || hop == _maxRedirectHops) return response;
 
-      await response.drain<void>();
+      await discardBody(response);
       uri = uri.resolve(location);
     }
     return response!;
@@ -207,7 +209,7 @@ class StreamDownloader {
   /// [allowPrivateHosts] is set) skips both checks entirely - the escape
   /// hatch tests use to point at a local `http://127.0.0.1` fixture
   /// server. Every other hop is always checked, `allowPrivateHosts` or not.
-  void _requireAllowedUrl(Uri uri, {required bool exempt}) {
+  Future<void> _requireAllowedUrl(Uri uri, {required bool exempt}) async {
     if (exempt) return;
     if (uri.scheme != 'https') {
       throw StreamDownloadException('Refusing a non-https URL: ${_redact(uri.toString())}');
@@ -217,11 +219,16 @@ class StreamDownloader {
         'Refusing a private/loopback/link-local host: ${_redact(uri.toString())}',
       );
     }
+    // The literal check above cannot see a hostname that RESOLVES to a private
+    // address (astra final): resolve it, before this hop is requested.
+    try {
+      await HostPolicy.assertResolvesToPublicHost(uri, resolveHost: _resolveHost);
+    } on MediaExtractionException catch (e) {
+      throw StreamDownloadException(e.reason ?? e.status); // host-only text already
+    }
   }
 
-  String _redact(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return url;
-    return UrlParser.stripQuery(uri).toString();
-  }
+  /// Host-only (Bulwark round 2): the path can carry tokens as well as the
+  /// query, and an unparseable URL is redacted the same way.
+  String _redact(String url) => UrlParser.redactUrlsInText(url);
 }

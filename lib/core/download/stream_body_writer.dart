@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../extractors/generic/bounded_body.dart';
 import '../extractors/media_models.dart';
 import 'stream_downloader.dart';
 
@@ -128,7 +129,7 @@ class StreamBodyWriter {
       try {
         final response = await get(url, headers, cookiesByDomain, null, null);
         if (response.statusCode >= 400) {
-          await response.drain<void>();
+          await discardBody(response);
           throw StreamDownloadException('HTTP ${response.statusCode} fetching ${redact(url)}');
         }
         _rejectNonMediaContentType(response, url);
@@ -146,7 +147,7 @@ class StreamBodyWriter {
         await Future.delayed(backoff(attempt));
       }
     }
-    throw StreamDownloadException('Failed to fetch ${redact(url)} after $maxRetries attempts: $lastError');
+    throw StreamDownloadException('Failed to fetch ${redact(url)} after $maxRetries attempts: ${redact('$lastError')}');
   }
 
   Future<int> downloadChunked(
@@ -209,7 +210,7 @@ class StreamBodyWriter {
             // appended on top of what was already written - duplicating
             // every byte after this point. Refuse instead: this candidate
             // is broken, let the pipeline try another one.
-            await response.drain<void>();
+            await discardBody(response);
             throw StreamDownloadException(
               'HTTP 200 fetching bytes $start-$end of ${redact(url)}: the server stopped honoring Range '
               'mid-download after earlier chunks succeeded.',
@@ -226,7 +227,7 @@ class StreamBodyWriter {
         }
 
         if (response.statusCode != 206) {
-          await response.drain<void>();
+          await discardBody(response);
           throw StreamDownloadException('HTTP ${response.statusCode} fetching bytes $start-$end of ${redact(url)}');
         }
 
@@ -253,7 +254,7 @@ class StreamBodyWriter {
         await Future.delayed(backoff(attempt));
       }
     }
-    throw StreamDownloadException('Failed to fetch bytes $start-$end after $maxRetries attempts: $lastError');
+    throw StreamDownloadException('Failed to fetch bytes $start-$end after $maxRetries attempts: ${redact('$lastError')}');
   }
 
   /// Requires a 206 response's own `Content-Range` header to confirm it

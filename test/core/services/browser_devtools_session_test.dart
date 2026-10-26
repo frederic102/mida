@@ -349,5 +349,39 @@ void main() {
       // scheduling variance, and a fired `Timeout` racing `tearDown`
       // rather than stopping this body).
     }, timeout: const Timeout(Duration(seconds: 30)));
+
+    // Phase 7 Lane H: MIDA_HEADLESS=1 in the injected environment vetoes the
+    // headed attempt even with a desktop session. Kept in this file (not
+    // browser_devtools_session_headless_test.dart) because these launches
+    // create real `mida_cdp_*` profile dirs, which would race the
+    // before/after snapshot in the silent-hang test above if run from a
+    // concurrently executing sibling file.
+    Future<List<String>> launchRecordingArgs(String name, Map<String, String> environment) async {
+      final workDir = isolatedWorkDir(name);
+      final marker = File('${workDir.path}/args.txt');
+      final bat = _writeFakeBrowser(workDir, name: name, script: ['@echo off', 'echo %*>>"${marker.path}"', 'exit /b 0']);
+      await expectLater(
+        BrowserDevtoolsSession.launch(
+          candidatePaths: () => [bat.path],
+          connectTimeout: const Duration(milliseconds: 150),
+          environment: environment,
+        ),
+        throwsA(isA<MediaExtractionException>()),
+      );
+      return _retryOnWindowsFileLock(() => marker.readAsLinesSync().where((l) => l.trim().isNotEmpty).toList());
+    }
+
+    test('MIDA_HEADLESS=1: exactly one launch, headless, with a desktop session present', () async {
+      final lines = await launchRecordingArgs('headless_env', {'SESSIONNAME': 'Console', 'MIDA_HEADLESS': '1'});
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('--headless=new'));
+    }, timeout: const Timeout(Duration(seconds: 30)));
+
+    test('without MIDA_HEADLESS the same setup tries headed first, then headless (guard can fail)', () async {
+      final lines = await launchRecordingArgs('headed_env', {'SESSIONNAME': 'Console'});
+      expect(lines, hasLength(2));
+      expect(lines.first, isNot(contains('--headless=new')));
+      expect(lines.last, contains('--headless=new'));
+    }, timeout: const Timeout(Duration(seconds: 30)));
   });
 }

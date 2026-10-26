@@ -1,0 +1,23 @@
+{
+  "result": 1,
+  "data": {
+    "title_no": 123456789,
+    "title": "Friday night ranked games",
+    "writer_nick": "StreamerNick",
+    "bj_id": "streamerid",
+    "thumb": "//videoimg.sooplive.co.kr/php/SnapshotLoad.php?rowKey=abc_123",
+    "total_file_duration": 3600000,
+    "adult_status": "",
+    "files": [
+      {
+        "file": "https://vod-archive.sooplive.co.kr/vod/part1/original/playlist.m3u8",
+        "duration": 3600000,
+        "quality_info": [
+          {"name": "original", "file": "https://vod-archive.sooplive.co.kr/vod/part1/original/playlist.m3u8", "resolution": "1920x1080", "bitrate": "6000"},
+          {"name": "hd", "file": "http://vod-archive.sooplive.co.kr/vod/part1/hd/playlist.m3u8", "resolution": "1280x720", "bitrate": 3000},
+          {"name": "broken", "file": "not a url"}
+        ]
+      }
+    ]
+  }
+}

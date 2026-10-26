@@ -1,0 +1,5 @@
+{"thread":{"$type":"app.bsky.feed.defs#threadViewPost","post":{
+"uri":"at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3koffhost2222",
+"author":{"did":"did:plc:z72i7hdynmk6r22z27h6tvur","handle":"alice.bsky.social"},
+"record":{"text":"playlist on an unrelated host"},
+"embed":{"$type":"app.bsky.embed.video#view","playlist":"https://evil.test/watch/x/y/playlist.m3u8"}}}}

@@ -1,0 +1,12 @@
+{
+ "account_id": "1234567890",
+ "player": {
+  "template": {
+   "name": "single-video-template"
+  }
+ },
+ "video_cloud": {
+  "policy_key": "BCpkADawqM1fakePolicyKey_abc-123",
+  "source_selection": "default"
+ }
+}

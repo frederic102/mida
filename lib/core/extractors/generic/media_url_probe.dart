@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'bounded_body.dart';
 import 'generic_http.dart';
+import 'stage_deadline.dart';
 import '../../net/host_policy.dart';
 
 /// Step 0 of the generic-extractor detection order
@@ -17,9 +19,14 @@ class MediaUrlProbe {
   /// Production code must never set this to true.
   final bool allowPrivateHosts;
 
+  /// DNS lookup behind the rebinding check (real lookup by default; a
+  /// test seam so a failing or private answer needs no real DNS).
+  final Future<List<InternetAddress>> Function(String host) resolveHost;
+
   MediaUrlProbe({
     HttpClient Function()? httpClientFactory,
     this.allowPrivateHosts = false,
+    this.resolveHost = InternetAddress.lookup,
   }) : _httpClientFactory = httpClientFactory ?? HttpClient.new;
 
   /// Every extension the generic extractor recognizes as "this URL is
@@ -63,21 +70,27 @@ class MediaUrlProbe {
   /// HEAD (falling back to GET when the server rejects HEAD with a 4xx/5xx)
   /// and maps the response Content-Type to a container. Returns null when
   /// the Content-Type is missing or not a recognized media type.
-  Future<String?> containerFromContentType(Uri url) async {
+  ///
+  /// [deadline] (the caller's stage deadline) bounds the whole probe. Only
+  /// headers are needed, so any body is discarded unread ([discardBody])
+  /// rather than downloaded.
+  Future<String?> containerFromContentType(Uri url, {StageDeadline? deadline}) async {
     final client = _httpClientFactory();
     try {
-      var response = await _send(client, url, useHead: true);
-      if (response.statusCode >= 400) {
-        await response.drain<void>();
-        response = await _send(client, url, useHead: false);
-      }
-      final contentType = response.headers.contentType?.mimeType.toLowerCase();
-      await response.drain<void>();
-      if (contentType == null) return null;
-      final known = _contentTypeContainers[contentType];
-      if (known != null) return known;
-      final isMedia = contentType.startsWith('video/') || contentType.startsWith('audio/');
-      return isMedia ? contentType.split('/').last : null;
+      return await runBounded(deadline, client, () async {
+        var response = await _send(client, url, useHead: true);
+        if (response.statusCode >= 400) {
+          await discardBody(response);
+          response = await _send(client, url, useHead: false);
+        }
+        final contentType = response.headers.contentType?.mimeType.toLowerCase();
+        await discardBody(response);
+        if (contentType == null) return null;
+        final known = _contentTypeContainers[contentType];
+        if (known != null) return known;
+        final isMedia = contentType.startsWith('video/') || contentType.startsWith('audio/');
+        return isMedia ? contentType.split('/').last : null;
+      });
     } finally {
       client.close(force: true);
     }
@@ -89,6 +102,7 @@ class MediaUrlProbe {
       url,
       useHead: useHead,
       allowPrivateHosts: allowPrivateHosts,
+      resolveHost: resolveHost,
       configureRequest: (request) {
         request.headers.set('User-Agent', genericDesktopUserAgent);
         request.headers.set('Accept-Language', genericAcceptLanguage);
@@ -123,27 +137,35 @@ class MediaUrlProbe {
   /// failure, non-2xx/206 status, or unrecognized Content-Type fails the
   /// probe (fail-closed: an unverifiable bare-URL-shaped string is exactly
   /// the case this exists to reject).
-  Future<bool> isPlausibleMediaCandidate(Uri url) async {
+  ///
+  /// [deadline] bounds the probe like [containerFromContentType]; its
+  /// expiry is rethrown ([StageDeadlineExceeded]) instead of reading as a
+  /// failed probe, so the caller stops rather than probing on.
+  Future<bool> isPlausibleMediaCandidate(Uri url, {StageDeadline? deadline}) async {
     final client = _httpClientFactory();
     try {
-      var response = await _send(client, url, useHead: true);
-      if (response.statusCode >= 400) {
-        await response.drain<void>();
-        response = await _sendRangeProbe(client, url);
-      }
-      if (response.statusCode >= 400) {
-        await response.drain<void>();
-        return false;
-      }
-      final contentType = response.headers.contentType?.mimeType.toLowerCase();
-      final totalSize = _totalSize(response);
-      await response.drain<void>();
-      if (contentType == null) return false;
-      final isManifest = _manifestContentTypes.contains(contentType);
-      final isMedia = isManifest || contentType.startsWith('video/') || contentType.startsWith('audio/');
-      if (!isMedia) return false;
-      if (isManifest) return true;
-      return totalSize != null && totalSize > _minPlausibleBytes;
+      return await runBounded(deadline, client, () async {
+        var response = await _send(client, url, useHead: true);
+        if (response.statusCode >= 400) {
+          await discardBody(response);
+          response = await _sendRangeProbe(client, url);
+        }
+        if (response.statusCode >= 400) {
+          await discardBody(response);
+          return false;
+        }
+        final contentType = response.headers.contentType?.mimeType.toLowerCase();
+        final totalSize = _totalSize(response);
+        await discardBody(response);
+        if (contentType == null) return false;
+        final isManifest = _manifestContentTypes.contains(contentType);
+        final isMedia = isManifest || contentType.startsWith('video/') || contentType.startsWith('audio/');
+        if (!isMedia) return false;
+        if (isManifest) return true;
+        return totalSize != null && totalSize > _minPlausibleBytes;
+      });
+    } on StageDeadlineExceeded {
+      rethrow;
     } catch (_) {
       return false;
     } finally {
@@ -157,6 +179,7 @@ class MediaUrlProbe {
       url,
       useHead: false,
       allowPrivateHosts: allowPrivateHosts,
+      resolveHost: resolveHost,
       configureRequest: (request) {
         request.headers.set('User-Agent', genericDesktopUserAgent);
         request.headers.set('Accept-Language', genericAcceptLanguage);

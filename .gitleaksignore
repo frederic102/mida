@@ -1,0 +1,5 @@
+# Reviewed false positives (2026-10-26).
+# Bluesky record key in a URL-matcher test, not a credential.
+test/core/extractors/bluesky/bluesky_extractor_test.dart:generic-api-key:223
+# Throwaway self-signed key for the hermetic loopback TLS test server; trusted only inside those tests, protects nothing.
+test/core/extractors/native_http/fake_tls_identity.dart:private-key:29

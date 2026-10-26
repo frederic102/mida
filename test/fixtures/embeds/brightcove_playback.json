@@ -1,0 +1,45 @@
+{
+ "id": "6301234567001",
+ "name": "Product tour 2026",
+ "duration": 93120,
+ "poster": "https://cf-images.us-east-1.prod.boltdns.net/v1/static/1234567890/poster.jpg",
+ "sources": [
+  {
+   "type": "application/x-mpegURL",
+   "src": "https://manifest.prod.boltdns.net/manifest/v1/hls/v4/clear/1234567890/abc/10s/master.m3u8",
+   "ext_x_version": "4"
+  },
+  {
+   "avg_bitrate": 2500000,
+   "width": 1280,
+   "height": 720,
+   "size": 29100000,
+   "container": "MP4",
+   "codec": "H264",
+   "src": "https://bcbolt446c5271-a.akamaihd.net/media/v1/pmp4/static/clear/1234567890/abc/high.mp4"
+  },
+  {
+   "avg_bitrate": 800000,
+   "width": 640,
+   "height": 360,
+   "size": 9300000,
+   "container": "MP4",
+   "codec": "H264",
+   "src": "https://bcbolt446c5271-a.akamaihd.net/media/v1/pmp4/static/clear/1234567890/abc/low.mp4"
+  },
+  {
+   "container": "MP4",
+   "codec": "AAC",
+   "avg_bitrate": 128000,
+   "src": "https://bcbolt446c5271-a.akamaihd.net/media/v1/pmp4/static/clear/1234567890/abc/audio.mp4"
+  },
+  {
+   "src": "rtmp://example.invalid/legacy",
+   "container": "FLV"
+  },
+  {
+   "type": "application/x-mpegURL",
+   "src": "https://manifest.prod.boltdns.net/manifest/v1/hls/v4/clear/1234567890/abc/10s/master.m3u8"
+  }
+ ]
+}

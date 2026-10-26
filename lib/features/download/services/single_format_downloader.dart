@@ -9,7 +9,7 @@ import '../../../core/extractors/media_models.dart';
 import '../../../core/utils/file_mover.dart';
 import '../../../core/utils/file_utils.dart';
 import 'adaptive_pair_downloader.dart';
-import 'download_service_io.dart';
+import '../models/download_models.dart';
 
 /// The audio-only-request and muxed-candidate download paths, split out of
 /// `MediaDownloadPipeline` purely to keep that file under the project's

@@ -4,7 +4,7 @@ import '../../../core/download/caption_downloader.dart';
 import '../../../core/download/media_merger.dart';
 import '../../../core/extractors/media_models.dart';
 import '../../../core/utils/file_utils.dart';
-import 'download_service_io.dart';
+import '../models/download_models.dart';
 
 /// Downloads and converts every requested subtitle track for one download.
 /// Split out of `MediaDownloadPipeline` to keep that file under this

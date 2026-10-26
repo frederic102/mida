@@ -1,0 +1,7 @@
+{
+  "resource_response": {
+    "status": "failure",
+    "data": null,
+    "error": {"http_status": 403, "code": 8, "message": "You must log in to view this pin", "message_detail": "Private pin"}
+  }
+}

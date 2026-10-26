@@ -297,7 +297,9 @@ void main() {
     // `lookupCalls` stayed 0 instead of 1. Reverted immediately after
     // confirming the failure.
 
-    test('a lookup failure fails CLOSED (refused), not proceeds as inconclusive', () async {
+    // Round 2 (Assay D1): still fails closed, but as NETWORK (exit 6), not
+    // UNSUPPORTED_URL; a private DNS answer stays UNSUPPORTED_URL (below).
+    test('a lookup failure fails CLOSED (NETWORK), not proceeds as inconclusive', () async {
       final client = HttpClient();
       addTearDown(() => client.close(force: true));
 
@@ -312,7 +314,7 @@ void main() {
           useHead: false,
           resolveHost: failingResolve,
         ),
-        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'UNSUPPORTED_URL')),
+        throwsA(isA<MediaExtractionException>().having((e) => e.status, 'status', 'NETWORK')),
       );
     });
 

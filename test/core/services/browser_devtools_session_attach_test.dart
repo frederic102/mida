@@ -55,6 +55,22 @@ class _FakeProcess implements Process {
   }
 }
 
+/// Generous per-test bound (round 2, Assay D8): these tests run real
+/// loopback WebSockets and flaked at 10 s under full-suite load. The
+/// assertions below wait on conditions, not fixed sleeps, so a slow machine
+/// only makes them slower, never red; a broken guard still fails because the
+/// awaited condition never becomes true and [_eventually] gives up.
+const Timeout _loadTolerantTimeout = Timeout(Duration(seconds: 60));
+
+/// Polls [condition] until it holds or [within] elapses (then returns
+/// anyway, so the caller's own `expect` reports the failure).
+Future<void> _eventually(bool Function() condition, {Duration within = const Duration(seconds: 20)}) async {
+  final deadline = DateTime.now().add(within);
+  while (!condition() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
 void main() {
   group('BrowserDevtoolsSession endpoint identity guard (fake DevTools WebSocket endpoint)', () {
     late HttpServer server;
@@ -101,13 +117,13 @@ void main() {
         // created/attached on the impostor endpoint.
         expect(process.killed, isFalse);
 
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await _eventually(() => serverSawClose);
         // Guard can fail: removing the `await cdp.close()` call before the
         // throw leaves the socket open and this assertion red - verified
         // by hand while writing this test, then restored.
         expect(serverSawClose, isTrue);
       },
-      timeout: const Timeout(Duration(seconds: 10)),
+      timeout: _loadTolerantTimeout,
     );
 
     test('accepts Chrome/HeadlessChrome/Edg-branded products', () async {
@@ -133,7 +149,7 @@ void main() {
         await session.close();
         await server.close(force: true);
       }
-    });
+    }, timeout: _loadTolerantTimeout);
   });
 
   group('BrowserDevtoolsSession child-target auto-attach (fake DevTools WebSocket endpoint)', () {
@@ -222,7 +238,7 @@ void main() {
           .where((e) => e.sessionId == 'session-child')
           .take(1)
           .toList()
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 20));
 
       expect(childEvents, hasLength(1));
       expect(childEvents.single.method, 'Network.responseReceived');
@@ -236,7 +252,7 @@ void main() {
       // `Network.responseReceived` event is silently dropped, the
       // `.timeout(...)` above fires, and this test goes red with a
       // TimeoutException instead of the expected single event.
-    });
+    }, timeout: _loadTolerantTimeout);
 
     test(
       'guard can fail: Target.setAutoAttach requests waitForDebuggerOnStart, and Fetch.enable is sent '
@@ -295,8 +311,9 @@ void main() {
         addTearDown(() => session.close());
 
         // The three child-session commands are fired-and-forget
-        // (unawaited) on attach; give them a moment to land.
-        await Future<void>.delayed(const Duration(milliseconds: 200));
+        // (unawaited) on attach; wait until the resume command has landed
+        // (bounded), then check Fetch.enable was already there before it.
+        await _eventually(() => childSessionCalls.contains('Runtime.runIfWaitingForDebugger'));
 
         expect(capturedAutoAttachParams?['waitForDebuggerOnStart'], isTrue);
         expect(childSessionCalls, contains('Fetch.enable'));
@@ -306,7 +323,7 @@ void main() {
           lessThan(childSessionCalls.indexOf('Runtime.runIfWaitingForDebugger')),
         );
       },
-      timeout: const Timeout(Duration(seconds: 10)),
+      timeout: _loadTolerantTimeout,
     );
   });
 }

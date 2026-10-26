@@ -3,7 +3,7 @@ import 'dart:io';
 import '../../../core/download/media_merger.dart';
 import '../../../core/download/output_stream_prober.dart';
 import '../../../core/extractors/format_selector.dart';
-import 'download_service_io.dart';
+import '../models/download_models.dart';
 
 /// Post-download checks `MediaDownloadPipeline` runs once per attempt,
 /// split out of that class purely to keep it under the 400-line rule.

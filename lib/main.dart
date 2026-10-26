@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
-import 'core/services/settings_service.dart';
+import 'features/settings/settings_service.dart';
 import 'features/download/services/download_service.dart';
 import 'features/compress/services/compress_service.dart';
 import 'features/extract/services/extract_service.dart';

@@ -1,0 +1,90 @@
+{
+ "media": {
+  "hashedId": "abc123xyz9",
+  "name": "Onboarding walkthrough",
+  "duration": 245.32,
+  "type": "Video",
+  "assets": [
+   {
+    "type": "original",
+    "display_name": "Original File",
+    "ext": "mp4",
+    "container": "mp4",
+    "codec": "h264",
+    "width": 1920,
+    "height": 1080,
+    "size": 120000000,
+    "bitrate": 3900,
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/0f1e2d3c.bin"
+   },
+   {
+    "type": "hd_mp4_video",
+    "display_name": "720p",
+    "ext": "mp4",
+    "container": "mp4",
+    "codec": "h264",
+    "width": 1280,
+    "height": 720,
+    "size": 70000000,
+    "bitrate": 2300,
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/1a2b3c4d.bin"
+   },
+   {
+    "type": "md_mp4_video",
+    "display_name": "360p",
+    "ext": "mp4",
+    "container": "mp4",
+    "codec": "h264",
+    "width": 640,
+    "height": 360,
+    "bitrate": 900,
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/5e6f7a8b.bin"
+   },
+   {
+    "type": "iphone_video",
+    "display_name": "Audio",
+    "ext": "m4a",
+    "container": "mp4",
+    "bitrate": 128,
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/aud10000.bin"
+   },
+   {
+    "type": "hls_video",
+    "display_name": "HLS",
+    "ext": "m3u8",
+    "container": "m3u8",
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/hls00000.bin"
+   },
+   {
+    "type": "md_mp4_video",
+    "display_name": "540p",
+    "ext": "mp4",
+    "status": 1,
+    "url": "https://embed-ssl.wistia.com/deliveries/pending0.bin"
+   },
+   {
+    "type": "flash_video",
+    "ext": "flv",
+    "container": "flv",
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/flash000.bin"
+   },
+   {
+    "type": "still_image",
+    "display_name": "Thumbnail",
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/thumb000.bin"
+   },
+   {
+    "type": "storyboard",
+    "status": 2,
+    "url": "https://embed-ssl.wistia.com/deliveries/story000.bin"
+   }
+  ]
+ }
+}

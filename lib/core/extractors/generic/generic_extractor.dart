@@ -1,15 +1,22 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
+import '../fallback_failure.dart';
 import '../media_extractor.dart';
 import '../media_models.dart';
 import 'embed_media_resolver.dart';
+import 'embeds/embed_delegation.dart';
+import 'embeds/embed_http.dart';
+import 'embeds/embed_resolver_chain.dart';
 import 'format_expander.dart';
+import 'generic_candidate_builder.dart';
 import 'generic_http.dart';
+import 'guarded_fetch.dart';
 import '../../net/host_policy.dart';
+import '../../utils/url_parser.dart';
 import 'html_media_sniffer.dart';
 import 'media_url_probe.dart';
+import 'stage_deadline.dart';
 
 /// Fallback extractor for any http(s) URL that no platform-native
 /// extractor recognizes. Detection order (first success wins), per
@@ -19,7 +26,13 @@ import 'media_url_probe.dart';
 ///
 ///   0. Is the URL itself media (extension, then Content-Type)?
 ///   1. Plain HTML GET, sniff `<video>` / og / JSON-LD / inline-script URLs.
-///   1.5. Nothing found -> follow up to [IframeFollower.maxCandidates]
+///      Only candidates that survive the reachability filter count: a page
+///      whose every candidate is rejected continues to the steps below.
+///   1.25. A known embed platform claims the page ([EmbedResolverChain]:
+///        Brightcove/Kaltura/Wistia/JW APIs, YouTube/Vimeo/Dailymotion
+///        delegation) -> resolve it first, so the generic iframe follow
+///        below never shadows a delegation or a platform API.
+///   1.5. Nothing yet -> follow up to [IframeFollower.maxCandidates]
 ///        `<iframe>`/`<embed>`/`og:video:url` embed pages (one level deep),
 ///        GET each with `Referer: <page url>`, sniff those; only if none of
 ///        those yield anything, try oEmbed discovery too. Both draw from
@@ -48,13 +61,17 @@ import 'media_url_probe.dart';
 /// DNS answer (rebinding guard).
 ///
 /// The entire static-analysis stage (everything above) runs under one
-/// [_staticStageDeadline]: a pathological or very slow page must not hang
-/// `extract()` indefinitely (resource-exhaustion follow-up).
+/// [StageDeadline] of [_staticStageDeadline]: a pathological or very slow
+/// page must not hang `extract()` indefinitely (resource-exhaustion
+/// follow-up). The deadline is a cancellation, not just a wait limit: on
+/// expiry (and whenever `extract()` returns) every connection still open
+/// under it is force-closed and no further request of this call starts.
 ///
 /// `canHandle` accepts every http(s) URL, so this must be registered last
 /// (Phase 2b) behind every platform-native extractor.
 class GenericExtractor implements MediaExtractor {
   final HttpClient Function() _httpClientFactory;
+  final Future<List<InternetAddress>> Function(String host) _resolveHost;
   final MediaUrlProbe _probe;
 
   /// Test-only escape hatch for [HostPolicy]'s SSRF guard so tests can
@@ -71,8 +88,11 @@ class GenericExtractor implements MediaExtractor {
   /// out. Production code must never set this.
   final Duration _effectiveStaticStageDeadline;
 
-  late final FormatExpander _formatExpander = FormatExpander(fetchText: _fetchWithStatus);
-  late final EmbedMediaResolver _embedResolver = EmbedMediaResolver(fetchText: _fetchText);
+  /// Step 1.25: embed-platform families (Brightcove, Kaltura, Wistia, JW
+  /// Player) via their public player APIs, plus YouTube/Vimeo/Dailymotion
+  /// delegation. Runs when step 1 found nothing usable and a resolver
+  /// claims the page.
+  final EmbedResolverChain _embedPlatforms;
 
   GenericExtractor({
     HttpClient Function()? httpClientFactory,
@@ -84,19 +104,32 @@ class GenericExtractor implements MediaExtractor {
     // drives a browser session at all (see class doc), so there is no
     // login-session mode of its own to toggle.
     bool useBrowserLoginSession = false,
+    // Same pass-through story as above: accepted so the registry builder
+    // can hand every extractor the Phase 7 flag uniformly; this extractor
+    // opens no browser (so it can never open a headed window either).
+    bool forceHeadless = false,
     Duration? staticStageDeadlineForTesting,
+    EmbedResolverChain? embedResolverChain,
+    // DNS seam for every rebinding check (page, embeds, probe, platform
+    // APIs); real lookup by default.
+    Future<List<InternetAddress>> Function(String host) resolveHost = InternetAddress.lookup,
   })  : _httpClientFactory = httpClientFactory ?? HttpClient.new,
-        _probe = probe ?? MediaUrlProbe(httpClientFactory: httpClientFactory, allowPrivateHosts: allowPrivateHosts),
+        _resolveHost = resolveHost,
+        _embedPlatforms = embedResolverChain ??
+            EmbedResolverChain(
+              http: GuardedEmbedHttp(
+                httpClientFactory: httpClientFactory ?? HttpClient.new,
+                allowPrivateHosts: allowPrivateHosts,
+                resolveHost: resolveHost,
+              ),
+            ),
+        _probe = probe ??
+            MediaUrlProbe(
+              httpClientFactory: httpClientFactory,
+              allowPrivateHosts: allowPrivateHosts,
+              resolveHost: resolveHost,
+            ),
         _effectiveStaticStageDeadline = staticStageDeadlineForTesting ?? _staticStageDeadline;
-
-  static final RegExp _emePattern = RegExp(r'\bEME\b', caseSensitive: false);
-  static const List<String> _drmMarkers = [
-    'widevine',
-    'playready',
-    'fairplay',
-    'encrypted-media',
-    'license_url',
-  ];
 
   /// Resource-exhaustion guard: a pathological or very slow page must not
   /// hang `extract()` indefinitely. Covers the whole static-analysis stage
@@ -111,28 +144,27 @@ class GenericExtractor implements MediaExtractor {
   /// off at this point rather than read in full.
   static const int _maxBodyBytes = 5 * 1024 * 1024;
 
-  /// Reachability-probe guard: caps how many non-context-backed candidates
-  /// (see `SniffedMedia.contextBacked`) get an actual HEAD/Range network
-  /// probe per `extract()` call, on top of the sniffer's own 200-candidate
-  /// cap - a page with dozens of bare URL-shaped matches must not turn
-  /// into dozens of extra HTTP round-trips.
-  static const int _maxReachabilityProbes = 10;
-
   @override
   bool canHandle(Uri url) => url.scheme == 'http' || url.scheme == 'https';
 
   @override
   Future<MediaInfo> extract(Uri url) async {
     if (!allowPrivateHosts && HostPolicy.isDisallowedHost(url)) {
+      // Host only: a refused URL's path and query can carry tokens.
       throw MediaExtractionException(
         'UNSUPPORTED_URL',
-        'Refusing to fetch $url: it resolves to a private, loopback, or link-local '
+        'Refusing to fetch ${url.host}: it resolves to a private, loopback, or link-local '
             'network address. This extractor only follows public internet hosts.',
       );
     }
 
+    final deadline = StageDeadline(_effectiveStaticStageDeadline);
     try {
-      return await _extractStatic(url).timeout(_effectiveStaticStageDeadline);
+      final info = await _extractStatic(url, deadline).timeout(_effectiveStaticStageDeadline);
+      // A result assembled after expiry (out of failures the expiry itself
+      // caused) is a timeout too, not a partial answer.
+      deadline.ensureActive();
+      return info;
     } on TimeoutException {
       throw const MediaExtractionException(
         'NO_MEDIA_FOUND',
@@ -140,212 +172,109 @@ class GenericExtractor implements MediaExtractor {
             'The site may need a live browser session to load its player; try again or use '
             'the direct video URL if you have it.',
       );
+    } on EmbedDelegationException {
+      // Its message names only a canonical URL built from a validated id.
+      rethrow;
+    } on MediaExtractionException catch (e) {
+      // Boundary sanitizing: reasons raised below (HostPolicy redirect
+      // refusals, DNS failures) may interpolate full URLs; every URL in a
+      // reason leaving this extractor is reduced to `scheme://host/...`.
+      final reason = e.reason == null ? null : UrlParser.redactUrlsInText(e.reason!);
+      // Keep the proven-offline subtype: the registry stops before a browser
+      // launch only for it (`OfflineNetworkException`, fallback_failure.dart).
+      if (e is OfflineNetworkException) throw OfflineNetworkException(reason ?? 'The network is unavailable.');
+      throw MediaExtractionException(e.status, reason);
+    } finally {
+      deadline.expire();
     }
   }
 
-  Future<MediaInfo> _extractStatic(Uri url) async {
+  static const Map<String, String> _pageHeaders = {'User-Agent': genericDesktopUserAgent};
+
+  Future<MediaInfo> _extractStatic(Uri url, StageDeadline deadline) async {
+    Future<FetchedBody> fetch(Uri target, {Map<String, String>? extraHeaders, int? maxBytes}) =>
+        _fetchWithStatus(target, deadline, extraHeaders: extraHeaders, maxBytes: maxBytes);
+    final expander = FormatExpander(fetchText: fetch);
+    final candidates = GenericCandidateBuilder(probe: _probe, expander: expander, deadline: deadline);
+
     final extensionContainer = MediaUrlProbe.containerFromExtension(url);
-    final directContainer = extensionContainer ?? await _probe.containerFromContentType(url);
+    final directContainer = extensionContainer ?? await _probe.containerFromContentType(url, deadline: deadline);
     if (directContainer != null) {
-      final expanded = await _formatExpander.expandFormats(url.toString(), directContainer);
-      if (expanded.formats.isEmpty && expanded.drmDetected) {
-        throw const MediaExtractionException(
-          'DRM_PROTECTED',
-          'This video is protected by DRM (Widevine, PlayReady, or FairPlay) and cannot be downloaded.',
-        );
-      }
+      final expanded = await expander.expandFormats(url.toString(), directContainer);
+      if (expanded.formats.isEmpty && expanded.drmDetected) throw GenericCandidateBuilder.drmProtected;
       return MediaInfo(
-        id: _idFromUrl(url),
-        title: _lastSegmentOrUrl(url),
+        id: GenericCandidateBuilder.idFromUrl(url),
+        title: GenericCandidateBuilder.lastSegmentOrUrl(url),
         sourceUrl: url,
-        formats: _formatExpander.orderFormats(expanded.formats),
-        requestHeaders: const {'User-Agent': genericDesktopUserAgent},
+        formats: expander.orderFormats(expanded.formats),
+        requestHeaders: _pageHeaders,
       );
     }
 
-    final html = await _fetchText(url);
+    final html = (await fetch(url)).body;
     final pageSniffed = HtmlMediaSniffer.sniff(html, url);
-    var sniffed = pageSniffed;
-    var corpusForDrmCheck = html;
     var anyDrmDropped = pageSniffed.anyDrmCandidatesDropped;
-    Map<String, String> requestHeaders = const {'User-Agent': genericDesktopUserAgent};
-    Map<String, String>? playlistFetchHeaders;
 
-    if (sniffed.isEmpty) {
-      final embedResult = await _embedResolver.followEmbeds(url, html);
-      if (embedResult != null) {
-        // Embed page's own title/thumbnail win; fall back to the outer
-        // page's when the embed page didn't have one.
-        sniffed = HtmlSniffResult(
+    // Step 1. Only candidates that survive the reachability filter AND
+    // expand into at least one format count: a dead bare URL or a manifest
+    // that fails to load must not hide a working embed further down.
+    final fromPage = await candidates.buildIfUsable(url, pageSniffed, requestHeaders: _pageHeaders);
+    if (fromPage != null) return fromPage;
+
+    // Step 1.25, before the generic iframe follow, so a delegation (or a
+    // platform API) is never shadowed by sniffing that player's own page.
+    if (_embedPlatforms.claims(html)) {
+      final platformInfo = await _embedPlatforms.resolve(pageUrl: url, html: html, deadline: deadline);
+      if (platformInfo != null) return platformInfo;
+    }
+
+    // Step 1.5.
+    final embeds = EmbedMediaResolver(
+      fetchText: (target, {extraHeaders}) async => (await fetch(target, extraHeaders: extraHeaders)).body,
+    );
+    final embedResult = await embeds.followEmbeds(url, html);
+    if (embedResult != null) {
+      anyDrmDropped = anyDrmDropped || embedResult.sniffed.anyDrmCandidatesDropped;
+      // Embed page's own title/thumbnail win; fall back to the outer
+      // page's when the embed page didn't have one.
+      final referer = embedResult.embedUrl.toString();
+      final fromEmbed = await candidates.buildIfUsable(
+        url,
+        HtmlSniffResult(
           mediaUrls: embedResult.sniffed.mediaUrls,
           title: embedResult.sniffed.title ?? pageSniffed.title,
           thumbnailUrl: embedResult.sniffed.thumbnailUrl ?? pageSniffed.thumbnailUrl,
           anyDrmCandidatesDropped: embedResult.sniffed.anyDrmCandidatesDropped,
-        );
-        anyDrmDropped = anyDrmDropped || embedResult.sniffed.anyDrmCandidatesDropped;
-        final referer = embedResult.embedUrl.toString();
-        requestHeaders = {'User-Agent': genericDesktopUserAgent, 'Referer': referer};
-        playlistFetchHeaders = {'Referer': referer};
-      }
-    }
-
-    if (sniffed.isEmpty) {
-      throw _noMediaOrDrmException(corpusForDrmCheck, anyDrmCandidatesDropped: anyDrmDropped);
-    }
-
-    // False-positive guard (security follow-up): a candidate the sniffer
-    // itself vouches for (`contextBacked`) is kept unconditionally; one
-    // with no context at all (found only by the raw-text catch-all, or a
-    // bare URL-shaped JSON string with no player-ish metadata around it)
-    // must pass a cheap reachability probe first. Context-backed
-    // candidates are placed first so they rank ahead of merely-probed ones
-    // (ties within a format-expansion tier are otherwise stable-ordered by
-    // discovery order; see `FormatExpander.orderFormats`).
-    final rankedCandidates = await _rankAndFilterCandidates(sniffed.mediaUrls);
-    if (rankedCandidates.isEmpty) {
-      throw _noMediaOrDrmException(corpusForDrmCheck, anyDrmCandidatesDropped: anyDrmDropped);
-    }
-
-    return _buildMediaInfo(
-      url,
-      HtmlSniffResult(
-        mediaUrls: rankedCandidates,
-        title: sniffed.title,
-        thumbnailUrl: sniffed.thumbnailUrl,
-        anyDrmCandidatesDropped: sniffed.anyDrmCandidatesDropped,
-      ),
-      requestHeaders: requestHeaders,
-      playlistFetchHeaders: playlistFetchHeaders,
-    );
-  }
-
-  Future<List<SniffedMedia>> _rankAndFilterCandidates(List<SniffedMedia> candidates) async {
-    final contextBacked = <SniffedMedia>[];
-    final bare = <SniffedMedia>[];
-    for (final candidate in candidates) {
-      (candidate.contextBacked ? contextBacked : bare).add(candidate);
-    }
-
-    final probed = <SniffedMedia>[];
-    var probesUsed = 0;
-    for (final candidate in bare) {
-      if (probesUsed >= _maxReachabilityProbes) break;
-      probesUsed++;
-      Uri parsed;
-      try {
-        parsed = Uri.parse(candidate.url);
-      } catch (_) {
-        continue;
-      }
-      final passed = await _probe.isPlausibleMediaCandidate(parsed);
-      if (passed) probed.add(candidate);
-    }
-    return [...contextBacked, ...probed];
-  }
-
-  Future<MediaInfo> _buildMediaInfo(
-    Uri sourceUrl,
-    HtmlSniffResult sniffed, {
-    required Map<String, String> requestHeaders,
-    Map<String, String>? playlistFetchHeaders,
-  }) async {
-    final formats = <MediaFormat>[];
-    var anyManifestDrm = false;
-    for (final media in sniffed.mediaUrls) {
-      final expanded = await _formatExpander.expandFormats(
-        media.url,
-        media.container,
-        extraHeaders: playlistFetchHeaders,
-        width: media.width,
-        height: media.height,
-        bitrate: media.bitrate,
-        capabilities: media.capabilities,
+        ),
+        requestHeaders: {'User-Agent': genericDesktopUserAgent, 'Referer': referer},
+        playlistFetchHeaders: {'Referer': referer},
       );
-      anyManifestDrm = anyManifestDrm || expanded.drmDetected;
-      formats.addAll(expanded.formats);
+      if (fromEmbed != null) return fromEmbed;
     }
-    if (formats.isEmpty && anyManifestDrm) {
-      throw const MediaExtractionException(
-        'DRM_PROTECTED',
-        'This video is protected by DRM (Widevine, PlayReady, or FairPlay) and cannot be downloaded.',
-      );
-    }
-    return MediaInfo(
-      id: _idFromUrl(sourceUrl),
-      title: sniffed.title ?? _lastSegmentOrUrl(sourceUrl),
-      thumbnailUrl: sniffed.thumbnailUrl,
-      sourceUrl: sourceUrl,
-      formats: _formatExpander.orderFormats(formats),
-      requestHeaders: requestHeaders,
-    );
+
+    throw candidates.noMediaOrDrm(html, anyDrmCandidatesDropped: anyDrmDropped);
   }
 
-  Future<String> _fetchText(Uri url, {Map<String, String>? extraHeaders}) async {
-    return (await _fetchWithStatus(url, extraHeaders: extraHeaders)).body;
-  }
-
-  /// Resource-exhaustion guard: stops buffering a response body once
-  /// [maxBytes] (defaulting to [_maxBodyBytes]) have been read, rather
-  /// than accumulating an unbounded amount of memory for a pathologically
-  /// large (or deliberately hostile) response. [FormatExpander] passes a
-  /// tighter cap for its per-variant DRM-verification fetches. Breaking
-  /// out of the `await for` loop cancels the underlying stream
-  /// subscription; `client.close(force: true)` in the `finally` block
-  /// below additionally tears down the connection regardless.
-  Future<FetchedBody> _fetchWithStatus(Uri url, {Map<String, String>? extraHeaders, int? maxBytes}) async {
-    final effectiveMaxBytes = maxBytes ?? _maxBodyBytes;
-    final client = _httpClientFactory();
-    try {
-      final response = await HostPolicy.guardedRequest(
-        client,
+  /// One guarded GET of this call ([guardedBoundedGet]): at most [maxBytes]
+  /// (defaulting to [_maxBodyBytes]; [FormatExpander] passes a tighter cap
+  /// for its per-variant DRM-verification fetches), bounded by [deadline].
+  Future<FetchedBody> _fetchWithStatus(
+    Uri url,
+    StageDeadline deadline, {
+    Map<String, String>? extraHeaders,
+    int? maxBytes,
+  }) =>
+      guardedBoundedGet(
+        _httpClientFactory,
         url,
-        useHead: false,
+        maxBytes: maxBytes ?? _maxBodyBytes,
         allowPrivateHosts: allowPrivateHosts,
+        deadline: deadline,
+        resolveHost: _resolveHost,
         configureRequest: (request) {
           request.headers.set('User-Agent', genericDesktopUserAgent);
           request.headers.set('Accept-Language', genericAcceptLanguage);
           extraHeaders?.forEach(request.headers.set);
         },
       );
-      final bytes = <int>[];
-      await for (final chunk in response) {
-        bytes.addAll(chunk);
-        if (bytes.length >= effectiveMaxBytes) break;
-      }
-      final capped = bytes.length > effectiveMaxBytes ? bytes.sublist(0, effectiveMaxBytes) : bytes;
-      String body;
-      try {
-        body = utf8.decode(capped);
-      } on FormatException {
-        body = latin1.decode(capped);
-      }
-      return FetchedBody(statusCode: response.statusCode, body: body);
-    } finally {
-      client.close(force: true);
-    }
-  }
-
-  MediaExtractionException _noMediaOrDrmException(String corpus, {bool anyDrmCandidatesDropped = false}) {
-    final lower = corpus.toLowerCase();
-    final hasDrmMarker =
-        anyDrmCandidatesDropped || _drmMarkers.any(lower.contains) || _emePattern.hasMatch(corpus);
-    if (hasDrmMarker) {
-      return const MediaExtractionException(
-        'DRM_PROTECTED',
-        'This video is protected by DRM (Widevine, PlayReady, or FairPlay) and cannot be downloaded.',
-      );
-    }
-    return const MediaExtractionException(
-      'NO_MEDIA_FOUND',
-      'No video found on this page. The site may load video only after '
-          'sign-in or interaction. Try the direct video URL if you have it.',
-    );
-  }
-
-  String _idFromUrl(Uri url) => 'generic-${url.toString().hashCode.toUnsigned(31)}';
-
-  String _lastSegmentOrUrl(Uri url) {
-    final segments = url.pathSegments.where((s) => s.isNotEmpty).toList();
-    return segments.isEmpty ? url.toString() : segments.last;
-  }
 }

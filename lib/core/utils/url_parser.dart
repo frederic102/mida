@@ -129,12 +129,82 @@ class UrlParser {
     return Uri.parse(str.substring(0, queryStart));
   }
 
-  /// Same idea as [stripQuery] but for free-form text (e.g. an already
-  /// stringified exception) that may have a URL embedded in it.
+  /// An http(s)/ws(s) URL inside free-form text: case-insensitive scheme,
+  /// no word boundary required before it (`_https://`, `1https://`), and
+  /// slashes written plainly (`://`), backslash-escaped once or more
+  /// (`:\/\/`, `:\\/\\/`), as `/` escapes, or percent-encoded
+  /// (`%3A%2F%2F`). Group 1 is the scheme, group 2 everything after the
+  /// slashes up to a delimiter.
+  static final RegExp _urlInText = RegExp(
+    r'''(https?|wss?)(?::(?:\\*/){2}|:(?:\\+u002f){2}|%3a%2f%2f)([^\s"'<>`]*)''',
+    caseSensitive: false,
+  );
+
+  /// A protocol-relative URL (`//cdn.example/v.mp4?sig=...`) at the start of
+  /// the text or after whitespace, a quote, `(`, `[`, `{`, `=` or `,`.
+  /// Group 1 is that lead-in, 2 the host, 3 the rest. A `:` lead-in is never
+  /// matched, so an already redacted `https://host/...` is left alone.
+  static final RegExp _protocolRelativeUrl = RegExp(
+    r'''(^|[\s"'(\[{=,])//(?:[^\s/@"'<>`]+@)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?([/?#][^\s"'<>`]*)?''',
+    caseSensitive: false,
+  );
+
+  /// Ends the authority (`userinfo@host:port`): a path, query, fragment,
+  /// the backslash of an escaped slash, or their percent-encoded forms.
+  static final RegExp _authorityEnd = RegExp(r'[/\\?#]|%2f|%3f|%23', caseSensitive: false);
+
+  /// The last userinfo separator: `@` or `%40`.
+  static final RegExp _userinfoEnd = RegExp(r'@|%40', caseSensitive: false);
+
+  /// Punctuation that ends a sentence rather than the URL (`... /x: could
+  /// not resolve`); kept outside the redacted URL.
+  static final RegExp _trailingPunctuation = RegExp(r'''[.,;:!?)\]}'"]+$''');
+
+  /// Redacts every URL in user-facing free-form text (an exception message,
+  /// a log line) down to `scheme://host/...`: no userinfo, no port, no path,
+  /// no query, no fragment (Phase 7 round 2, Bulwark B2 / Assay D2). Paths
+  /// carry secrets too (Kaltura `/ks/<token>/`, CDN `exp=~hmac=` path
+  /// signatures), so the host is the most this keeps. A bare `scheme://host`
+  /// or `scheme://host/` keeps its shape. Text without a URL is unchanged.
+  /// The name is kept from the query-only version so every caller gets the
+  /// stronger behavior.
   static String redactUrlsInText(String text) {
-    return text.replaceAllMapped(
-      RegExp(r'(https?://[^\s"]+?)\?[^\s"]*'),
-      (match) => match.group(1)!,
-    );
+    final schemed = text.replaceAllMapped(_urlInText, (match) {
+      var rest = match.group(2)!;
+      final trailing = _trailingPunctuation.firstMatch(rest)?.group(0) ?? '';
+      rest = rest.substring(0, rest.length - trailing.length);
+      final scheme = match.group(1)!.toLowerCase();
+      final authorityEnd = rest.indexOf(_authorityEnd);
+      var authority = authorityEnd == -1 ? rest : rest.substring(0, authorityEnd);
+      final remainder = authorityEnd == -1 ? '' : rest.substring(authorityEnd);
+      final userinfo = _userinfoEnd.allMatches(authority).lastOrNull;
+      if (userinfo != null) authority = authority.substring(userinfo.end);
+      authority = _hostOnly(authority);
+      return '$scheme://$authority${_pathSuffix(remainder)}$trailing';
+    });
+    return schemed.replaceAllMapped(_protocolRelativeUrl, (match) {
+      var rest = match.group(3) ?? '';
+      final trailing = _trailingPunctuation.firstMatch(rest)?.group(0) ?? '';
+      rest = rest.substring(0, rest.length - trailing.length);
+      return '${match.group(1)}//${match.group(2)}${_pathSuffix(rest)}$trailing';
+    });
+  }
+
+  /// `''` for no path, `/` for a bare root (plain or escaped), else `/...`.
+  static String _pathSuffix(String remainder) {
+    if (remainder.isEmpty) return '';
+    final bareRoot = remainder == '/' || RegExp(r'^\\+/$').hasMatch(remainder) || remainder.toLowerCase() == '%2f';
+    return bareRoot ? '/' : '/...';
+  }
+
+  /// Drops a `:port` (or `%3A` port) from [authority], keeping a bracketed
+  /// IPv6 literal.
+  static String _hostOnly(String authority) {
+    if (authority.startsWith('[')) {
+      final close = authority.indexOf(']');
+      return close == -1 ? authority : authority.substring(0, close + 1);
+    }
+    final colon = authority.indexOf(RegExp(r':|%3a', caseSensitive: false));
+    return colon == -1 ? authority : authority.substring(0, colon);
   }
 }

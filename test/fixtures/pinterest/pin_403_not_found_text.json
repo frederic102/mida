@@ -1,0 +1,7 @@
+{
+  "resource_response": {
+    "status": "failure",
+    "data": null,
+    "error": {"http_status": 403, "code": 8, "message": "Pin not found for this viewer", "message_detail": "not found unless you sign in"}
+  }
+}

@@ -1,0 +1,25 @@
+{
+ "id": "6301234567001",
+ "name": "Protected title",
+ "duration": 60000,
+ "sources": [
+  {
+   "type": "application/x-mpegURL",
+   "src": "https://manifest.prod.boltdns.net/manifest/v1/hls/v4/fairplay/1234567890/abc/master.m3u8",
+   "key_systems": {
+    "com.apple.fps.1_0": {
+     "key_request_url": "https://fp.service.brightcove.com/api/fairplay"
+    }
+   }
+  },
+  {
+   "type": "application/dash+xml",
+   "src": "https://manifest.prod.boltdns.net/manifest/v1/dash/live-baseurl/bccenc/1234567890/abc/manifest.mpd",
+   "key_systems": {
+    "com.widevine.alpha": {
+     "license_url": "https://manifest.prod.boltdns.net/license/v1/cenc/widevine"
+    }
+   }
+  }
+ ]
+}

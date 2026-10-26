@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import '../../../core/services/settings_service.dart';
+import '../../settings/settings_service.dart';
 import '../../../core/services/platform_service.dart';
 import '../../../core/services/ffmpeg_locator.dart';
 import '../../../core/utils/file_utils.dart';

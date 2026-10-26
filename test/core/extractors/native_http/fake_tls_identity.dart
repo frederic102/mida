@@ -1,0 +1,57 @@
+// TEST ONLY. A throwaway self-signed identity (CN=mida-test-only) generated
+// for the hermetic loopback TLS server in `fake_https_server.dart`. It
+// protects nothing: the client in those tests accepts any certificate by
+// design, and the key never signs anything real. Do not reuse it.
+
+const String fakeTlsCertificatePem = '''
+-----BEGIN CERTIFICATE-----
+MIIDFTCCAf2gAwIBAgIUFW30XRDeIgs+bJLsmVp2erM8TYcwDQYJKoZIhvcNAQEL
+BQAwGTEXMBUGA1UEAwwObWlkYS10ZXN0LW9ubHkwIBcNMjYxMDI1MDUyNzE5WhgP
+MjEyNjEwMDEwNTI3MTlaMBkxFzAVBgNVBAMMDm1pZGEtdGVzdC1vbmx5MIIBIjAN
+BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2rx5AYLuyfn+HEmhRaB2GwwvVVEV
+HO9jlIHRcLx34YNW6nDk+tDBCjnFl7ToiFUOy+izvasP+rDNSTPttMyQqKZKW0lU
+wj1173Wfy/wJqZaU1yK3lv1tnY001SIMyqh9Wm40ZsDR1IKbJMhXTd6ZhxBq3qco
+Ch/8dDlWlq5CaL2DujIP1DJUhGuoDo3oXW6l1GFGoWn/UIg1l2EoOHqEkDP0vSV5
+4c/UrQJuf44d8QZ77OHyEPJB9XazutBsxaNcadEf7vH2eCmtC6CmzYb77fgRiqJc
+yHNPgifV8Uw65rM4gLSM1bv34o4Z6W9gGvEpOKuV+KC0QX5yDtMkgC9ZqQIDAQAB
+o1MwUTAdBgNVHQ4EFgQUryK/KLC9xVr0PnkW0PzPqfNeS/8wHwYDVR0jBBgwFoAU
+ryK/KLC9xVr0PnkW0PzPqfNeS/8wDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B
+AQsFAAOCAQEAT6bNFzdmKkZMqoM3LqCcbxLHI9tULEG3ibYD8jOzhpkUZVbn0BpM
+KybjNFjWA8nin8x56ar9k68fN+3pg1YJw+mIeo/YUUyMmrAyuXzMoF6PF6RFuPKo
+LSUyYbxO8wVnmdTSvOgTUCHHqJIh4j6+wm5bn1CDjTlh8oFbuKGOtBhxjg1sosdA
+/VU5yEentZ45/3LccjCiioX8StCGFUMQDhCLU78hv9GTVW5JZhx106/aSu0pclKH
+NP0onVIXFJV50dl5vd/f/QPFdeNm4gsIq2s0jqGAFHSCLYoo9DI2IuznrSv1mrwD
+vx+sArd2ef+L7m8sSrEsj+uMJj98kLCDVA==
+-----END CERTIFICATE-----
+''';
+
+const String fakeTlsPrivateKeyPem = '''
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDavHkBgu7J+f4c
+SaFFoHYbDC9VURUc72OUgdFwvHfhg1bqcOT60MEKOcWXtOiIVQ7L6LO9qw/6sM1J
+M+20zJCopkpbSVTCPXXvdZ/L/AmplpTXIreW/W2djTTVIgzKqH1abjRmwNHUgpsk
+yFdN3pmHEGrepygKH/x0OVaWrkJovYO6Mg/UMlSEa6gOjehdbqXUYUahaf9QiDWX
+YSg4eoSQM/S9JXnhz9StAm5/jh3xBnvs4fIQ8kH1drO60GzFo1xp0R/u8fZ4Ka0L
+oKbNhvvt+BGKolzIc0+CJ9XxTDrmsziAtIzVu/fijhnpb2Aa8Sk4q5X4oLRBfnIO
+0ySAL1mpAgMBAAECggEADm/RFsHzC76lwG01qThJg0h/GUT0PUgpjOQylBvEV8yI
+4IlZ+5nqm8erXHNyw4jFpLyznEmdkOC5c+LrBftYcuEi2DqTTwyqa4caaGa2poxL
+P5XJgzwvz23B9m08ZeXP/Dd42u1QDBQgtEFKzddqz6jMPOzQbjalPXCJYAGZXXtB
+UwRO4+CkbdQkAs5m9UND8IQPoTh0fqPsXLpq4TZCLEhbD5ht9gsQEVHPVmisYQlZ
+BoC4ERhwaxnzu+z/mZusqZ5b0EvW6Eb2SqfdadMVKBd6b6OIGwIPlZ3yJQTEZlT7
+56miEH82twiKkrHyv4aR/PDt1uOdoHNG+8o8tacUNwKBgQD+/oTK91TOUIb50ioL
+5stH74AdK0vqXO8wfd42BQqvq1U8H21sHv2a6E1r5zFZmUtaKi56+UIIhgx5dbu+
+goV+fr2o00AlQcvqYtIzbXFIzZtWdlgqnagrqGztlQkoZs5AZJTUMoYvw9RmHPRx
+amsbkdwSUqY4hDa/rWurq+pMAwKBgQDbmVeiqIPm0njyH3vfzCzeXZ1bsR5smOc7
+NuE4PMebsLovMaZTJ+BVnxLHGjYSv7u4VVCQlQoft6gVpGmMhWLrIOcNP6PHUl4z
+P/PwicAe8v1iRFHJYTQJvWin+GyJEZUdtmoDYQ47/MxADPW2d2RvoUCRiale8Udg
+DTtKjctR4wKBgQD875rpec01mctJo57xj021XWzHglsbbnQUtcXl77pZ5qn1qXbw
++Qy2zBeAISRirByCo7TXZsiJi+5zzMUehHnGsBGRlXrbehi7tqqrOLRWcxzS9zEd
+lKVsKPVj9aHP4apVVXALzNIuLyJQ6AfROK5l+plB05nuFbf5ChzzfOQ74QKBgHfK
+MDn0vu8dBQjfD83HLPqoCnzII5aN2iU9DKKG1UQipY21Acv+xqsuOSoPLEwR9y7Y
+qzgTdRBUOQaFR2Z2JL2qlx9tBcRnNCe0zTb7jafUWVBPgGXf9mkRv5NROrOSucsZ
+hL8PJJqojiqqZyb//fO+/N/nPlMiPxMwZJWIv86NAoGBAKtFYhKYPDwyIRu987hE
+fO351Z47hK2t25e0bKlCaiOFs6Eakr5/Y5FNecaS8woT0kIEDbGiK/FfHhaMNrPC
+TmnJOwK/PFw3bCcFt6EVg8+Ciqp+lSIdG2ibis2wQrhfVT4co3Tq783WqXpfgjgU
+xdvvsq/W2iHfxOi2gHF0MRfX
+-----END PRIVATE KEY-----
+''';

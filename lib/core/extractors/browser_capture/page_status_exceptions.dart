@@ -9,6 +9,26 @@ import 'page_status_detector.dart';
 class PageStatusExceptions {
   const PageStatusExceptions._();
 
+  /// A main document that answered 429 or 5xx and produced no media: the
+  /// honest diagnosis is the status itself (`RATE_LIMITED` / `NETWORK`),
+  /// not "no media" and never a headless block (Phase 7 round 2, Bulwark
+  /// B3). Null for any other status. Only [url]'s host is named.
+  static MediaExtractionException? forMainDocumentStatus(Uri url, int? status) {
+    if (status == 429) {
+      return MediaExtractionException(
+        'RATE_LIMITED',
+        '${url.host} answered 429 Too Many Requests to the browser capture. Wait a while and try again.',
+      );
+    }
+    if (status != null && status >= 500 && status < 600) {
+      return MediaExtractionException(
+        'NETWORK',
+        '${url.host} answered with a server error (HTTP $status) to the browser capture. Try again later.',
+      );
+    }
+    return null;
+  }
+
   static MediaExtractionException forSignal(PageStatusSignal? signal) {
     switch (signal) {
       case PageStatusSignal.loginRequired:

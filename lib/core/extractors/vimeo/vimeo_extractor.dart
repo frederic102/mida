@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 
 import '../../net/host_policy.dart';
+import '../generic/bounded_body.dart';
 import '../media_extractor.dart';
 import '../media_models.dart';
 import 'vimeo_config_parser.dart';
@@ -27,7 +27,8 @@ import 'vimeo_config_parser.dart';
 /// No embed-token games, challenge solving, fingerprint spoofing, or DRM/
 /// certificate bypass, per `docs/supported-sites.md`. Only an explicit
 /// privacy signal from Vimeo (a `403` whose body is Vimeo's own
-/// private/password JSON) is terminal `LOGIN_REQUIRED`; a `403` with any
+/// private/password JSON) is `LOGIN_REQUIRED` (the registry still offers it
+/// to the browser tier, then reports it as-is); a `403` with any
 /// other body (a WAF or address ban page, for example) is a technique
 /// failure (`CHALLENGE_FAILED`) so the registry still tries the generic and
 /// browser tiers, which is what worked for Vimeo before this extractor
@@ -150,11 +151,11 @@ class VimeoExtractor implements MediaExtractor {
       // Status first, body second: a refusal must never make this read an
       // unbounded body before deciding what it means.
       if (status == 404) {
-        await response.drain<void>();
+        await discardBody(response);
         throw const MediaExtractionException('NOT_FOUND', 'This Vimeo video no longer exists or the link is wrong.');
       }
       if (status == 429) {
-        await response.drain<void>();
+        await discardBody(response);
         throw const MediaExtractionException('RATE_LIMITED', 'Vimeo is throttling this request. Wait a moment and try again.');
       }
 
@@ -195,41 +196,18 @@ class VimeoExtractor implements MediaExtractor {
     }
   }
 
-  /// Reads at most [_maxBodyBytes] of [response] as UTF-8, cancelling the
-  /// stream the moment the cap is hit.
+  /// Reads at most [_maxBodyBytes] of [response] as UTF-8 through the
+  /// shared bounded reader (Vigil L1), bounded in time by [_requestTimeout].
+  /// A timeout leaves the read to the `finally` in the caller, which
+  /// force-closes the client and with it this body.
   static Future<String> _readBounded(HttpClientResponse response) async {
-    final builder = BytesBuilder(copy: false);
-    var total = 0;
-    final completer = Completer<void>();
-    late final StreamSubscription<List<int>> sub;
-    sub = response.listen(
-      (chunk) {
-        final remaining = _maxBodyBytes - total;
-        if (remaining <= 0) return;
-        final take = chunk.length < remaining ? chunk.length : remaining;
-        builder.add(take == chunk.length ? chunk : chunk.sublist(0, take));
-        total += take;
-        if (total >= _maxBodyBytes) {
-          sub.cancel();
-          if (!completer.isCompleted) completer.complete();
-        }
-      },
-      onDone: () {
-        if (!completer.isCompleted) completer.complete();
-      },
-      onError: (Object e, StackTrace _) {
-        if (!completer.isCompleted) completer.completeError(e);
-      },
-      cancelOnError: true,
-    );
     try {
-      await completer.future.timeout(_requestTimeout);
+      final body = await readBoundedBytes(response, _maxBodyBytes).timeout(_requestTimeout);
+      return utf8.decode(body.bytes, allowMalformed: true);
     } on TimeoutException {
-      await sub.cancel();
       throw const MediaExtractionException('NETWORK', 'Vimeo stopped sending the player config.');
-    } on IOException catch (e) {
-      throw MediaExtractionException('NETWORK', 'Connection to Vimeo failed while reading: $e');
+    } on IOException {
+      throw const MediaExtractionException('NETWORK', 'The connection to Vimeo failed while reading the player config.');
     }
-    return utf8.decode(builder.toBytes(), allowMalformed: true);
   }
 }

@@ -53,6 +53,14 @@ Write-Host "Copying binaries..." -ForegroundColor Yellow
 Copy-Item (Join-Path $binariesDir "ffmpeg.exe") $outputDir
 Copy-Item (Join-Path $binariesDir "ffprobe.exe") $outputDir
 
+# Compile the headless CLI (agents and scripts call this, no GUI)
+Write-Host "Compiling mida-cli.exe..." -ForegroundColor Yellow
+& dart compile exe (Join-Path $projectDir "bin\mida_cli.dart") -o (Join-Path $outputDir "mida-cli.exe")
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CLI compile failed!" -ForegroundColor Red
+    exit 1
+}
+
 # Rename executable
 $oldExe = Join-Path $outputDir "mida.exe"
 $newExe = Join-Path $outputDir "MiDa.exe"

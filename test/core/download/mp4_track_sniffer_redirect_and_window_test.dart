@@ -83,7 +83,7 @@ void main() {
     // "allowed", the only difference between them is that they are
     // different origins.
     const hostA = '93.184.216.34';
-    const hostB = '198.51.100.7';
+    const hostB = '93.184.215.14'; // public; 198.51.100.0/24 is now refused as a doc range
 
     test(
       'guard can fail: a redirect to a different origin forwards neither the flat headers\' Cookie/Authorization '

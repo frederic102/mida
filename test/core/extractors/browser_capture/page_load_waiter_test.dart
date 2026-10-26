@@ -53,7 +53,12 @@ void main() {
       final candidates = <String, CapturedMediaCandidate>{};
       final stopwatch = Stopwatch()..start();
 
-      final future = PageLoadWaiter.wait(session, candidates, loadTimeout: const Duration(seconds: 30));
+      // Round 2 (Assay D8): the bound is tied to loadTimeout, not a fixed
+      // wall-clock 5 s that flaked under suite load. Exiting early means
+      // well under half of loadTimeout; a waiter that ignores the candidate
+      // waits the full 2 minutes and trips the 90 s test timeout instead.
+      const loadTimeout = Duration(minutes: 2);
+      final future = PageLoadWaiter.wait(session, candidates, loadTimeout: loadTimeout);
       Future<void>.delayed(const Duration(milliseconds: 50), () {
         candidates['k'] = const CapturedMediaCandidate(url: 'https://cdn.example.com/a.mp4', container: 'mp4');
       });
@@ -62,8 +67,8 @@ void main() {
       stopwatch.stop();
 
       expect(loadFired, isFalse); // the load event itself never arrived
-      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
-    });
+      expect(stopwatch.elapsed, lessThan(loadTimeout ~/ 2));
+    }, timeout: const Timeout(Duration(seconds: 90)));
 
     test('returns false once loadTimeout elapses with neither signal', () async {
       final session = _EventStreamSession();

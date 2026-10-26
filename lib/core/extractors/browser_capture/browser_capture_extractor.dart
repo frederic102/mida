@@ -1,19 +1,22 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import '../../services/browser_devtools_session.dart';
 import '../../services/cdp_client.dart';
+import '../../services/interactive_session_detector.dart';
 import '../generic/html_media_sniffer.dart';
 import '../media_extractor.dart';
 import '../media_models.dart';
 import 'captured_format_builder.dart';
+import 'dom_video_urls.dart';
+import 'headless_block_detector.dart';
 import 'captured_media_classifier.dart';
 import '../../net/host_policy.dart';
 import 'capture_attempt.dart';
 import 'capture_drive_loop.dart';
 import 'main_document_status_tracker.dart';
 import 'network_signal_recorder.dart';
+import 'no_media_diagnosis.dart';
 import 'page_load_waiter.dart';
 import 'page_meta_reader.dart';
 import 'page_status_detector.dart';
@@ -29,10 +32,8 @@ import 'session_request_context.dart';
 /// `ExtractorRegistry` - it is slow (seconds, not milliseconds) and only
 /// worth paying for once cheaper detection has already failed.
 class BrowserCaptureExtractor implements MediaExtractor {
-  /// Test-only override (tests own their own launch behavior entirely,
-  /// including whatever login-session shape they want). Null in
-  /// production, where [_launchSession] calls [BrowserDevtoolsSession.launch]
-  /// directly with [useBrowserLoginSession].
+  /// Test-only override of the whole launch. Null in production, where
+  /// [_launchSession] calls [BrowserDevtoolsSession.launch] directly.
   final Future<DevtoolsSession> Function({Duration connectTimeout})? _sessionLauncher;
   final CapturedFormatBuilder _formatBuilder;
   final SegmentManifestProber _segmentProber;
@@ -72,6 +73,20 @@ class BrowserCaptureExtractor implements MediaExtractor {
   /// to today. See `docs/plan-phase4-cookies-resilience.md` SCOPE 1-2.
   final bool useBrowserLoginSession;
 
+  /// Phase 7 agent/CLI mode: never open a headed window. One headless
+  /// attempt (no headed-first, no retry); a loaded page with zero media that
+  /// looks like a challenge/empty shell throws `HEADLESS_BLOCKED`
+  /// ([HeadlessBlockDetector]). Also on when `MIDA_HEADLESS=1` is set in
+  /// the environment (injectable for tests).
+  final bool forceHeadless;
+  final Map<String, String>? _environment;
+
+  /// Test-only: called with each launch's `preferHeaded` just before
+  /// [_launchSession] runs (the injected launcher shape cannot carry it).
+  final void Function({required bool preferHeaded})? launchObserver;
+
+  bool get _headless => forceHeadless || InteractiveSessionDetector.isHeadlessForced(environment: _environment);
+
   BrowserCaptureExtractor({
     Future<DevtoolsSession> Function({Duration connectTimeout})? sessionLauncher,
     HttpClient Function()? httpClientFactory,
@@ -83,7 +98,11 @@ class BrowserCaptureExtractor implements MediaExtractor {
     this.variantSettleDelay = const Duration(seconds: 3),
     this.pollInterval = const Duration(seconds: 1),
     this.useBrowserLoginSession = false,
+    this.forceHeadless = false,
+    Map<String, String>? environment,
+    this.launchObserver,
   })  : _sessionLauncher = sessionLauncher,
+        _environment = environment,
         _formatBuilder = CapturedFormatBuilder(httpClientFactory: httpClientFactory),
         _segmentProber = SegmentManifestProber(httpClientFactory: httpClientFactory);
 
@@ -91,30 +110,29 @@ class BrowserCaptureExtractor implements MediaExtractor {
   bool canHandle(Uri url) => url.scheme == 'http' || url.scheme == 'https';
 
   /// Production default (no [_sessionLauncher] injected) launches directly
-  /// with [useBrowserLoginSession] and [preferHeaded] threaded through,
-  /// rather than closing over them in a stored function literal (a
-  /// function literal cannot itself declare an optional parameter's
-  /// default value in Dart, which the `{Duration connectTimeout}` shape
-  /// here would otherwise need). A test-injected [_sessionLauncher] never
-  /// sees [preferHeaded] at all - it has no headed/headless concept, and
-  /// [_attemptCapture]'s retry decision does not depend on it knowing.
+  /// with [useBrowserLoginSession] and [preferHeaded] threaded through. A
+  /// test-injected [_sessionLauncher] never sees [preferHeaded] (it has no
+  /// headed/headless concept); tests observe it via [launchObserver].
   Future<DevtoolsSession> _launchSession({required Duration connectTimeout, required bool preferHeaded}) {
+    launchObserver?.call(preferHeaded: preferHeaded);
     final launcher = _sessionLauncher;
     if (launcher != null) return launcher(connectTimeout: connectTimeout);
     return BrowserDevtoolsSession.launch(
       connectTimeout: connectTimeout,
       useBrowserLoginSession: useBrowserLoginSession,
       preferHeaded: preferHeaded,
+      environment: _environment,
     );
   }
 
   @override
   Future<MediaInfo> extract(Uri url) async {
     HostPolicy.assertAllowedHost(url, context: 'this page');
-    final first = await _attemptCapture(url, preferHeaded: true);
+    // Forced headless: one headless attempt, no headed-first and no retry.
+    final first = await _attemptCapture(url, preferHeaded: !_headless);
     if (first.info != null) return first.info!;
 
-    if (shouldRetryHeadless(first, hasInjectedSessionLauncher: _sessionLauncher != null)) {
+    if (!_headless && shouldRetryHeadless(first, hasInjectedSessionLauncher: _sessionLauncher != null)) {
       final retry = await _attemptCapture(url, preferHeaded: false);
       if (retry.info != null) return retry.info!;
       throw retry.error!;
@@ -154,7 +172,8 @@ class BrowserCaptureExtractor implements MediaExtractor {
     });
     try {
       await session.send('Page.navigate', {'url': url.toString()});
-      onLoadFired(await _waitForLoad(session, candidates));
+      final loaded = await _waitForLoad(session, candidates);
+      onLoadFired(loaded);
 
       // Fail fast on a login wall, a bot-verification interstitial (never
       // solved - see PageStatusDetector), or a 404: none of these three
@@ -163,12 +182,19 @@ class BrowserCaptureExtractor implements MediaExtractor {
       // nothing to gain by running that whole budget first (diagnostic
       // run, docs/plan-phase5-coverage.md: Reddit alone burned 40s on a
       // "Prove your humanity" page this way before this check existed).
-      final earlySignal = await _pageStatusSignal(session, url, mainDocStatus.status);
-      if (earlySignal != null) throw PageStatusExceptions.forSignal(earlySignal);
+      final earlySignal =
+          await NoMediaDiagnosis.pageStatusSignal((e) => _evalString(session, e), url, mainDocStatus.status);
+      if (earlySignal != null) {
+        // Headless: a bot-check page is a headless-specific block (a headed
+        // run may pass it), so say so instead of the generic BOT_CHECK.
+        throw _headless && earlySignal == PageStatusSignal.botCheckRequired
+            ? HeadlessBlockDetector.exception(url)
+            : PageStatusExceptions.forSignal(earlySignal);
+      }
 
       await _driveCapture(session, candidates);
 
-      final domVideoUrls = await _domVideoElementUrls(session);
+      final domVideoUrls = await DomVideoUrls.read((e) => _evalString(session, e));
       await _backfillFromPerformanceEntries(session, candidates, segmentUrls);
       // Round 5 (real-download-gate regression): a post-hoc pass over the
       // *complete* set of network-observed candidates - only a group of
@@ -180,8 +206,9 @@ class BrowserCaptureExtractor implements MediaExtractor {
       var finalCandidates = CapturedMediaRanker.rank(candidates.values.toList(growable: false), domVideoUrls);
 
       HtmlSniffResult? domFallback;
+      String? outerHtml;
       if (finalCandidates.isEmpty) {
-        final outerHtml = await _evalString(session, 'document.documentElement.outerHTML');
+        outerHtml = await _evalString(session, 'document.documentElement.outerHTML');
         if (outerHtml != null) {
           domFallback = HtmlMediaSniffer.sniff(outerHtml, url);
           finalCandidates = [
@@ -206,7 +233,16 @@ class BrowserCaptureExtractor implements MediaExtractor {
       }
 
       if (finalCandidates.isEmpty) {
-        throw await _noMediaException(session, url, domFallback, mainDocStatus.status);
+        // Login wall / 404 / bot-check / 429 / 5xx / headless block / none:
+        // see NoMediaDiagnosis.exceptionFor for the order.
+        throw await NoMediaDiagnosis.exceptionFor(
+          (e) => _evalString(session, e),
+          url,
+          domFallback,
+          mainDocStatus.status,
+          headlessBlockCheck: _headless && loaded,
+          html: outerHtml,
+        );
       }
 
       // Reject before doing anything further with these URLs (our own
@@ -275,38 +311,9 @@ class BrowserCaptureExtractor implements MediaExtractor {
     }
   }
 
-  Future<MediaExtractionException> _noMediaException(
-    DevtoolsSession session,
-    Uri sourceUrl,
-    HtmlSniffResult? domFallback,
-    int? mainDocumentStatus,
-  ) async {
-    final signal = await _pageStatusSignal(session, sourceUrl, mainDocumentStatus, domFallback: domFallback);
-    return PageStatusExceptions.forSignal(signal);
-  }
-
-  /// Shared by the fast early-exit in [_captureWith] and [_noMediaException]
-  /// (the late, "nothing was ever found" path) - one page-status read, one
-  /// classification, so the two call sites can never disagree about what a
-  /// given page's own title/URL/status code mean.
-  Future<PageStatusSignal?> _pageStatusSignal(
-    DevtoolsSession session,
-    Uri sourceUrl,
-    int? mainDocumentStatus, {
-    HtmlSniffResult? domFallback,
-  }) async {
-    final meta = await PageMetaReader.read((expression) => _evalString(session, expression));
-    final finalUrl = Uri.tryParse((meta?['href'] as String?) ?? '') ?? sourceUrl;
-    final title = PageMetaReader.title(meta) ?? domFallback?.title;
-    return PageStatusDetector.detect(finalUrl: finalUrl, title: title, mainDocumentStatusCode: mainDocumentStatus);
-  }
-
-  /// Whether `Page.loadEventFired` was actually observed within
-  /// See [PageLoadWaiter.wait]. Used by [_attemptCapture]/[extract] to
-  /// decide whether a media-less result is worth retrying headless (a page
-  /// that never finished loading at all is a much stronger "this
-  /// session's render may itself be the problem" signal than one that
-  /// loaded fine and simply had no media).
+  /// See [PageLoadWaiter.wait]; the result feeds [shouldRetryHeadless] and
+  /// the forced-headless block check (a page that never loaded is a
+  /// different signal than one that loaded with no media).
   Future<bool> _waitForLoad(DevtoolsSession session, Map<String, CapturedMediaCandidate> candidates) =>
       PageLoadWaiter.wait(session, candidates, loadTimeout: loadTimeout);
 
@@ -334,32 +341,6 @@ class BrowserCaptureExtractor implements MediaExtractor {
         candidates,
         segmentUrls,
       );
-
-  static const String _videoElementUrlsExpression = '''
-JSON.stringify(
-  Array.from(document.querySelectorAll('video')).flatMap(function (v) {
-    var urls = [v.currentSrc || v.src || null];
-    Array.from(v.querySelectorAll('source')).forEach(function (s) { urls.push(s.src || null); });
-    return urls;
-  }).filter(function (u) { return u && u.indexOf('blob:') !== 0; })
-)
-''';
-
-  /// The URLs the live DOM's own `<video>`/`<source>` elements are
-  /// actually pointed at right now (`blob:` excluded) - see
-  /// [CapturedMediaRanker] for why this outranks a same-shaped but
-  /// unrelated network response.
-  Future<List<String>> _domVideoElementUrls(DevtoolsSession session) async {
-    final raw = await _evalString(session, _videoElementUrlsExpression);
-    if (raw == null) return const [];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
-      return decoded.whereType<String>().toList();
-    } catch (_) {
-      return const [];
-    }
-  }
 
   Future<String?> _evalString(DevtoolsSession session, String expression) async {
     try {

@@ -2,6 +2,7 @@ import 'html_media_sniffer.dart';
 import 'iframe_follower.dart';
 import 'network_budget.dart';
 import 'oembed_scanner.dart';
+import 'stage_deadline.dart';
 
 /// Result of a successful [EmbedMediaResolver.followEmbeds] pass: the
 /// merged media found across every embed page that yielded any, plus the
@@ -63,6 +64,8 @@ class EmbedMediaResolver {
       String embedHtml;
       try {
         embedHtml = await fetchText(embedUrl, extraHeaders: {'Referer': pageUrl.toString()});
+      } on StageDeadlineExceeded {
+        rethrow;
       } catch (_) {
         continue;
       }
@@ -121,6 +124,8 @@ class EmbedMediaResolver {
     String body;
     try {
       body = await fetchText(oembedUrl);
+    } on StageDeadlineExceeded {
+      rethrow;
     } catch (_) {
       return null;
     }

@@ -21,4 +21,24 @@ class InteractiveSessionDetector {
     final sessionName = (environment ?? Platform.environment)['SESSIONNAME'];
     return sessionName != null && sessionName.isNotEmpty;
   }
+
+  /// Environment variable that forces every browser launch headless
+  /// (docs/plan-phase7-coverage-agent.md Lane H): `1`, `true` or `yes`
+  /// (case-insensitive) turn it on, anything else (including unset) leaves
+  /// the default headed-first behavior untouched.
+  static const String headlessEnvVar = 'MIDA_HEADLESS';
+
+  static bool isHeadlessForced({Map<String, String>? environment}) {
+    final raw = (environment ?? Platform.environment)[headlessEnvVar]?.trim().toLowerCase();
+    return raw == '1' || raw == 'true' || raw == 'yes';
+  }
+
+  /// The one decision `BrowserDevtoolsSession.launch` makes about whether a
+  /// headed attempt is even tried: only when the caller prefers it, the
+  /// environment does not force headless, and a desktop session exists.
+  static bool shouldTryHeaded({required bool preferHeaded, Map<String, String>? environment}) {
+    return preferHeaded &&
+        !isHeadlessForced(environment: environment) &&
+        hasInteractiveSession(environment: environment);
+  }
 }
