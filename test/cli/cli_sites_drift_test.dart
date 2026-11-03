@@ -37,9 +37,11 @@ const _idByClass = {
 /// list before the catch-all `GenericExtractor`.
 List<String> _nativeClassesInBuilder() {
   final source = File('lib/core/extractors/extractor_registry_builder.dart').readAsStringSync();
-  final body = source.substring(source.indexOf('return ExtractorRegistry('));
+  // Commented-out entries register nothing.
+  final code = source.replaceAll(RegExp(r'/\*[\s\S]*?\*/'), '').replaceAll(RegExp(r'//.*'), '');
+  final body = code.substring(code.indexOf('return ExtractorRegistry('));
   final primary = body.substring(0, body.indexOf('GenericExtractor('));
-  return [for (final m in RegExp(r'\b(\w+Extractor)\(').allMatches(primary)) m.group(1)!];
+  return [for (final m in RegExp(r'\b(\w+Extractor)(?:\.\w+)?\s*\(').allMatches(primary)) m.group(1)!];
 }
 
 void main() {
@@ -72,14 +74,13 @@ void main() {
         .split(RegExp(r',\s*'))
         .map((s) => s.trim().split(' ').first)
         .toList();
-    // v2.4.0 natives from the 2026-11-03 headless CLI check.
-    final liveNatives = RegExp(r'^Downloaded natively \(2026-11-03\): ([^.]+)\.', multiLine: true)
-        .firstMatch(doc)!
-        .group(1)!
-        .split(RegExp(r',\s*'))
-        .map((k) => k.trim())
-        .toList();
-    expect(liveNatives, ['facebook', 'pinterest', 'streamable', 'bluesky', 'soop', 'telegram']);
+    // Natives from every dated "Downloaded natively (<date>): ..." line, so a
+    // later run's line changes the expected set too.
+    final liveNatives = [
+      for (final m in RegExp(r'^Downloaded natively \([^)\n]+\): ([^.\n]+)\.[ \t]*\r?$', multiLine: true).allMatches(doc))
+        ...m.group(1)!.split(RegExp(r',\s*')).map((k) => k.trim()),
+    ];
+    expect(liveNatives, containsAll(['facebook', 'pinterest', 'streamable', 'bluesky', 'soop', 'telegram']));
     expect(downloaded, hasLength(19));
     expect(rerun, ['niconico', 'pinterest', 'ted', 'facebook']);
 

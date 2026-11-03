@@ -42,12 +42,15 @@ class PinterestUrlMatcher {
   /// The host the `pin.it` redirector sends visitors through.
   static const String redirectorHost = 'api.pinterest.com';
 
-  /// Also the SEO form `/pin/<slug>--<id>/` Pinterest links from search results.
-  static final RegExp _pinPath = RegExp(r'^/pin/(?:[a-z0-9-]{1,200}--)?(\d{1,25})/?$');
+  /// Also the SEO form `/pin/<slug>--<id>/` Pinterest links from search
+  /// results; the slug (any text without `/`, possibly percent-encoded) is
+  /// ignored and only the numeric id is used.
+  static const String _pinId = r'^/pin/(?:[^/]+--)?(\d{1,25})';
+  static final RegExp _pinPath = RegExp('$_pinId/?\$');
 
   /// Where a short link may land: also tolerates the `/sent/` suffix the
   /// share redirect appends.
-  static final RegExp _landingPath = RegExp(r'^/pin/(\d{1,25})(?:/sent)?/?$');
+  static final RegExp _landingPath = RegExp('$_pinId(?:/sent)?/?\$');
   static final RegExp _shortPath = RegExp(r'^/([0-9A-Za-z]{3,32})/?$');
 
   static const Set<String> _shortHosts = {'pin.it', 'www.pin.it'};

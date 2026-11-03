@@ -27,7 +27,10 @@ class StreamableUrlMatcher {
     final scheme = url.scheme.toLowerCase();
     if (scheme != 'https' && scheme != 'http') return null;
     if (!_hosts.contains(url.host.toLowerCase())) return null;
-    final code = (_embedPath.firstMatch(url.path) ?? _plainPath.firstMatch(url.path))?.group(1);
+    final embed = _embedPath.firstMatch(url.path)?.group(1);
+    if (embed != null) return embed;
+    final code = _plainPath.firstMatch(url.path)?.group(1);
+    // Site pages such as /login only collide with codes at the top level.
     if (code == null || _siteRoutes.contains(code.toLowerCase())) return null;
     return code;
   }

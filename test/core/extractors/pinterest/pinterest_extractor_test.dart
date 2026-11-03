@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/core/extractors/media_models.dart';
 import 'package:mida/core/extractors/pinterest/pinterest_extractor.dart';
+import 'package:mida/core/extractors/pinterest/pinterest_url_matcher.dart';
 
 import '../native_http/fake_https_server.dart';
 
@@ -49,10 +50,22 @@ void main() {
         'https://www.pinterest.co.kr/pin/123/',
         'https://pinterest.ru/pin/123/',
         'https://www.pinterest.com/pin/diy-pin-tutorial-video--41025046600764526/',
+        'https://www.pinterest.com/pin/Caf%C3%A9-Video--123/',
         'https://pin.it/AbC123x',
       ]) {
         expect(e.canHandle(Uri.parse(ok)), isTrue, reason: ok);
       }
+    });
+
+    test('a short link landing on a slug pin URL gives the same id as a direct link', () {
+      for (final landing in [
+        'https://www.pinterest.com/pin/diy-video--41025046600764526/',
+        'https://www.pinterest.com/pin/diy-video--41025046600764526/sent/',
+        'https://www.pinterest.com/pin/${'a' * 400}--41025046600764526/',
+      ]) {
+        expect(PinterestUrlMatcher.pinIdFromLanding(Uri.parse(landing)), '41025046600764526', reason: landing);
+      }
+      expect(PinterestUrlMatcher.pinIdFromLanding(Uri.parse('https://www.pinterest.com/pin/a/b--1/')), isNull);
     });
 
     test('rejects other shapes, look-alike hosts and non-numeric ids', () {
@@ -62,7 +75,8 @@ void main() {
         'https://www.pinterest.com/pin/abc/',
         'https://www.pinterest.com/pin/123/extra/',
         'https://www.pinterest.com/pin/slug-123/',
-        'https://www.pinterest.com/pin/Slug--123/',
+        'https://www.pinterest.com/pin/slug--abc/',
+        'https://www.pinterest.com/pin/a/b--123/',
         'https://www.pinterest.com/pin/--/',
         'https://evilpinterest.com/pin/123/',
         'https://pinterest.com.evil.test/pin/123/',

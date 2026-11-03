@@ -126,6 +126,7 @@ void main() {
       expect(StreamableUrlMatcher.match(Uri.parse('https://www.streamable.com/e/abc12/')), 'abc12');
       expect(StreamableUrlMatcher.match(Uri.parse('http://streamable.com/AbC123')), 'AbC123');
       expect(StreamableUrlMatcher.match(Uri.parse('https://streamable.com/moo')), 'moo');
+      expect(StreamableUrlMatcher.match(Uri.parse('https://streamable.com/e/api')), 'api');
       for (final input in [
         'https://streamable.com/',
         'https://streamable.com/login',
