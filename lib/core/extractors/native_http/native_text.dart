@@ -53,6 +53,8 @@ class NativeText {
     if (value is! String) return null;
     var text = value.trim();
     if (text.isEmpty || RegExp(r'[\s\x00-\x1f\x7f]').hasMatch(text)) return null;
+    // Streamable's API returns `https:https://cdn...` for some older videos.
+    if (text.startsWith('https:https://')) text = text.substring(6);
     if (text.startsWith('//')) text = 'https:$text';
     if (text.startsWith('http://')) text = 'https://${text.substring(7)}';
     final uri = Uri.tryParse(text);

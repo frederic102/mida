@@ -19,7 +19,7 @@ Agent usage playbook for the CLI: `.claude/skills/mida-download/SKILL.md`.
   [--quality best|2160|1440|1080|720|480|360] [--container mp4|webm|mkv] [--audio-format mp3|m4a|opus|flac|wav]
   [--audio-quality best|320|256|128] [--format-id ID] [--captions] [--subtitles ko|en|ko,en] [--login-session]
   [--headless] [--ffmpeg PATH] [--quiet]`, `sites`, `version`, `help` (also `--help`, `-h`). `sites` adds `measured_live`: ids that downloaded a
-  real file in a recorded live run; every v2.4.0 addition is absent.
+  real file in a recorded live run; of the v2.4.0 additions only facebook, pinterest, soop, telegram, streamable and bluesky are present.
 - Command lines are for PowerShell or bash; do not paste them into cmd.exe. Quote the URL and `--out` in single quotes
   (`'https://...'`; in PowerShell double any `'` inside as `''`, in bash write it as `'\''`). Never put a
   URL in double quotes yourself: `$` and backticks in it would be expanded. The app's

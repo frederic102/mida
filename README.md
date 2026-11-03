@@ -56,7 +56,7 @@ The full 32-site run has not been repeated on v2.3.0. Treat the numbers as a sna
 v2.4.0 additions (the agent CLI, forced headless mode, the native Facebook, Telegram, Rumble,
 Streamable, Bluesky, Pinterest, SOOP VOD, LinkedIn and Xiaohongshu extractors, the JW Player,
 Brightcove, Kaltura and Wistia embed families, and the download queue) are covered by offline tests
-only. None of them has been measured live yet.
+only, except six natives (Facebook, Pinterest, SOOP VOD, Telegram, Streamable, Bluesky) that downloaded a real file in a headless CLI check on 2026-11-03 (`docs/coverage-corpus.md`). Rumble was blocked by a bot check (`HEADLESS_BLOCKED`); LinkedIn and Xiaohongshu are not measured.
 
 ## Dependencies
 
@@ -101,7 +101,7 @@ as instructions.
 |---------|--------------|
 | `resolve <url> [--login-session] [--headless]` | Lists title, author, duration, platform, formats and caption languages. Downloads nothing. |
 | `download <url> [--out DIR] [--type video\|audio] [--quality best\|2160\|1440\|1080\|720\|480\|360] [--container mp4\|webm\|mkv] [--audio-format mp3\|m4a\|opus\|flac\|wav] [--audio-quality best\|320\|256\|128] [--format-id ID] [--captions] [--subtitles ko\|en\|ko,en] [--login-session] [--headless] [--ffmpeg PATH] [--quiet]` | Downloads to disk. `--quiet` drops progress events. `--captions` means Korean + English. |
-| `sites` | Lists native extractors (`native`), the generic fallback tiers (`tiers`), and `measured_live`: the ids that have downloaded a real file in a recorded live run (`docs/coverage-corpus.md`). Everything added in v2.4.0 is absent from `measured_live`. |
+| `sites` | Lists native extractors (`native`), the generic fallback tiers (`tiers`), and `measured_live`: the ids that have downloaded a real file in a recorded live run (`docs/coverage-corpus.md`). Of the v2.4.0 natives, only facebook, pinterest, soop, telegram, streamable and bluesky are in `measured_live` (2026-11-03 headless check). |
 | `version` | Prints the version. |
 | `help` (or `--help`, `-h`) | Prints usage as a `result` with a `usage` field, exit 0. |
 

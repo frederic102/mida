@@ -49,7 +49,7 @@ class OutputStreamProber {
     }
     final stdout = result.stdout;
     final types = stdout is String
-        ? stdout.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toSet()
+        ? stdout.split('\n').map(_codecTypeOf).where((l) => l.isNotEmpty).toSet()
         : <String>{};
     // A non-zero exit with nothing parsed means ffprobe actively refused
     // this file (corrupt/fragmented-without-init/not really media at
@@ -59,6 +59,11 @@ class OutputStreamProber {
     if (result.exitCode != 0 && types.isEmpty) return const <String>{};
     return types;
   }
+
+  /// First csv field of one ffprobe line. ffprobe's csv writer appends an empty
+  /// field for a stream carrying side data (a rotation matrix prints `video,`),
+  /// which made `contains('video')` false for a valid file.
+  static String _codecTypeOf(String line) => line.split(',').first.trim();
 
   /// Phase 6 round 2 (S-R7): the container-level `format=duration` (in
   /// whole seconds plus fraction) ffprobe reports for [path], or null when

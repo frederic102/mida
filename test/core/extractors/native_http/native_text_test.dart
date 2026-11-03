@@ -30,6 +30,8 @@ void main() {
       expect(NativeText.httpsUrl('http://a.test/x.mp4'), 'https://a.test/x.mp4');
       expect(NativeText.httpsUrl('//a.test/x.mp4'), 'https://a.test/x.mp4');
       expect(NativeText.httpsUrl(' https://a.test/x.mp4 '), 'https://a.test/x.mp4');
+      expect(NativeText.httpsUrl('https:https://a.test/x.mp4'), 'https://a.test/x.mp4');
+      expect(NativeText.httpsUrl('https:https:https://a.test/x.mp4'), isNull);
     });
 
     test('rejects non-URLs, other schemes, whitespace and non-strings', () {

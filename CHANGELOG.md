@@ -4,11 +4,12 @@
 
 ## [2.4.0] - 2026-10-25
 
-Nothing in this release has been measured live yet: no real-site download,
-no 32-site corpus rerun, and no agent session calling the installed CLI.
-Everything below is covered by offline tests only (fixtures, fake servers,
-fake processes). Treat the new extractors and tiers as unconfirmed until a
-live run says otherwise.
+Live check 2026-11-03 (headless CLI, `docs/coverage-corpus.md`): the native
+Facebook, Pinterest, SOOP VOD, Telegram, Streamable and Bluesky extractors
+each downloaded a real file. Rumble ended `HEADLESS_BLOCKED` (bot check);
+LinkedIn and Xiaohongshu, the embed families, the 32-site corpus rerun and
+agent sessions are not measured. Everything else below is covered by offline
+tests only; treat it as unconfirmed until a live run says otherwise.
 
 ### Added
 - Agent CLI `mida-cli` (`bin/mida_cli.dart`, shipped as `mida-cli.exe` next
@@ -16,8 +17,8 @@ live run says otherwise.
   JSON lines only (`status`, `progress`, `result`, `error`), stable exit codes
   0/2/3/4/5/6/7, plus 8 when the reader closes stdout early (a download
   that already saved its file still exits 0). `sites` reports
-  `measured_live`, the ids confirmed by a recorded live download; every
-  v2.4.0 addition is absent from it. Every string on stdout
+  `measured_live`, the ids confirmed by a recorded live download (of the
+  v2.4.0 natives: facebook, pinterest, soop, telegram, streamable, bluesky). Every string on stdout
   passes URL redaction at one choke point; headers, cookies and media URLs
   are never printed. `MIDA_DEBUG=1` prints the sanitized classification to
   stderr, never the raw exception.
@@ -36,11 +37,13 @@ live run says otherwise.
 - Forced headless mode (`--headless`, `MIDA_HEADLESS=1`) for the
   browser-capture tier, with an honest `HEADLESS_BLOCKED` result instead of
   any attempt to get past a bot check. Not measured live.
-- Native Facebook extractor (public videos and reels). Not measured live:
-  no Facebook download has been confirmed on a real page yet.
+- Native Facebook extractor (public videos and reels). Downloaded a
+  public video in the 2026-11-03 live check.
 - Eight more native extractors: Telegram, Rumble, Streamable, Bluesky,
-  Pinterest, SOOP VOD, LinkedIn and Xiaohongshu. Not measured live: each is
-  built and tested against recorded page shapes only.
+  Pinterest, SOOP VOD, LinkedIn and Xiaohongshu. Telegram, Streamable,
+  Bluesky, Pinterest and SOOP VOD downloaded in the 2026-11-03 live check;
+  Rumble hit a bot check (`HEADLESS_BLOCKED`); LinkedIn and Xiaohongshu are
+  not measured.
 - Embedded-player families in the generic tier: JW Player, Brightcove,
   Kaltura and Wistia, plus delegation of YouTube and Vimeo iframes to their
   native extractors. Not measured live.
@@ -81,6 +84,15 @@ live run says otherwise.
 - README states the measured coverage, the dependency footprint, and that no macOS
   installer has been published. Supported-sites list marks Naver TV as shut down
   (2026-09-30).
+
+### Fixed
+- Downloads of rotated or phone-recorded mp4s were wrongly rejected as
+  missing a video track: the output check misread ffprobe's `video,` row
+  (side data such as rotation) as no stream.
+- The native Pinterest extractor now accepts the slug pin URL form
+  (`/pin/<slug>--<id>/`), and the native Streamable extractor accepts
+  3-character codes and the `https:https://` file URLs its API returns for
+  some older videos. Before, those URLs fell back to generic analysis.
 
 ### Removed
 - The Settings "Dark Mode" switch. MiDa has only a dark theme, so the switch

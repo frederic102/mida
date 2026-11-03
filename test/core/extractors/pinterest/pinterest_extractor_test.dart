@@ -48,6 +48,7 @@ void main() {
         'https://www.pinterest.com.au/pin/123/',
         'https://www.pinterest.co.kr/pin/123/',
         'https://pinterest.ru/pin/123/',
+        'https://www.pinterest.com/pin/diy-pin-tutorial-video--41025046600764526/',
         'https://pin.it/AbC123x',
       ]) {
         expect(e.canHandle(Uri.parse(ok)), isTrue, reason: ok);
@@ -60,6 +61,9 @@ void main() {
         'https://www.pinterest.com/someuser/someboard/',
         'https://www.pinterest.com/pin/abc/',
         'https://www.pinterest.com/pin/123/extra/',
+        'https://www.pinterest.com/pin/slug-123/',
+        'https://www.pinterest.com/pin/Slug--123/',
+        'https://www.pinterest.com/pin/--/',
         'https://evilpinterest.com/pin/123/',
         'https://pinterest.com.evil.test/pin/123/',
         'https://example.com/pin/123/',

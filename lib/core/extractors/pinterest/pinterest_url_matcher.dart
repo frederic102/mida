@@ -42,7 +42,8 @@ class PinterestUrlMatcher {
   /// The host the `pin.it` redirector sends visitors through.
   static const String redirectorHost = 'api.pinterest.com';
 
-  static final RegExp _pinPath = RegExp(r'^/pin/(\d{1,25})/?$');
+  /// Also the SEO form `/pin/<slug>--<id>/` Pinterest links from search results.
+  static final RegExp _pinPath = RegExp(r'^/pin/(?:[a-z0-9-]{1,200}--)?(\d{1,25})/?$');
 
   /// Where a short link may land: also tolerates the `/sent/` suffix the
   /// share redirect appends.

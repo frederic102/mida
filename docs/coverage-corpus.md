@@ -145,3 +145,33 @@ ted 145.2MB, facebook 0.7MB. Notes that matter for reading these numbers:
 
 Not resolved: twitch-clip (anonymous GraphQL gated), reddit and bilibili (bot challenge), weibo
 (visitor wall). The browser login session toggle may help on those when the user is signed in.
+
+## v2.4.0 native live check (2026-11-03, headless CLI)
+
+Run: `dist/windows/mida-cli.exe download <url> --quality 360 --headless`, outputs checked with ffprobe.
+One public URL per site, no login. Each site's native extractor was also run alone against the
+same URL (no generic or browser-capture fallback in the loop) and returned formats, so the download
+is credited to the native tier. The first run of pinterest and streamable went through generic
+analysis instead (the native URL matchers rejected the slug pin URL and the 3-character code `moo`,
+and Streamable's API returned `https:https://cdn...`); all three were fixed and both reran natively.
+
+Downloaded natively (2026-11-03): facebook, pinterest, streamable, bluesky, soop, telegram.
+
+- facebook (`https://www.facebook.com/NatGeoAnimals/videos/reindeer-national-geographic/371360365972647/`):
+  h264 360x640 + aac, 746,832 bytes.
+- pinterest (`https://www.pinterest.com/pin/diy-pin-tutorial-video--41025046600764526/`): video + audio, 688,479
+  bytes (after the slug URL fix).
+- streamable (`https://streamable.com/moo`): h264 + aac, 3,044,857 bytes (after the short code and
+  doubled-scheme fixes).
+- bluesky (`https://bsky.app/profile/bsky.app/post/3myi3k45jh22z`): h264 video only (the source is
+  silent), 502,570 bytes.
+- soop (`https://vod.sooplive.co.kr/player/104611357`): h264 600x800 + aac, 1.4 s (the source HLS
+  playlist itself is 1.4 s).
+- telegram (`https://t.me/telegram/459`): first failed with "Output is missing its video track". Root
+  cause: `OutputStreamProber` misread ffprobe csv `video,` (side data such as rotation). Fixed in
+  `lib/core/download/output_stream_prober.dart`; after the fix h264 1920x1920 + aac, 5,697,716 bytes.
+- rumble (`https://rumble.com/v2r1rw6-top-7-most-viewed-videos.html`): ended `HEADLESS_BLOCKED`
+  (exit 5). Rumble answered 403, then the headless browser hit a bot check. Correct policy behavior;
+  not measured as downloaded.
+- linkedin, xiaohongshu: not measured (no public video URL without login, or a per-session
+  xsec_token).

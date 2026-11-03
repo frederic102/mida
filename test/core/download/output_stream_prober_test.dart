@@ -54,6 +54,17 @@ void main() {
     expect(types, {'video', 'audio'});
   });
 
+  test('a trailing csv field (side data such as rotation prints `video,`) does not hide the stream type', () async {
+    // Live-caught (Telegram t.me/telegram/459): real ffprobe printed `video,` then `audio`.
+    final scriptPath = '${tempDir.path}/fake_ffprobe_sidedata.bat';
+    await File(scriptPath).writeAsString('@echo off\r\necho video,\r\necho audio\r\nexit /b 0\r\n');
+    final prober = OutputStreamProber(ffprobePathResolver: () async => scriptPath);
+
+    final types = await prober.streamTypes('${tempDir.path}/whatever.mp4');
+
+    expect(types, {'video', 'audio'});
+  });
+
   test('ffprobe itself could not even be started (missing binary) stays null - genuinely inconclusive', () async {
     final prober = OutputStreamProber(
       ffprobePathResolver: () async => '${tempDir.path}/this_binary_does_not_exist.exe',

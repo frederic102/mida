@@ -72,6 +72,14 @@ void main() {
         .split(RegExp(r',\s*'))
         .map((s) => s.trim().split(' ').first)
         .toList();
+    // v2.4.0 natives from the 2026-11-03 headless CLI check.
+    final liveNatives = RegExp(r'^Downloaded natively \(2026-11-03\): ([^.]+)\.', multiLine: true)
+        .firstMatch(doc)!
+        .group(1)!
+        .split(RegExp(r',\s*'))
+        .map((k) => k.trim())
+        .toList();
+    expect(liveNatives, ['facebook', 'pinterest', 'streamable', 'bluesky', 'soop', 'telegram']);
     expect(downloaded, hasLength(19));
     expect(rerun, ['niconico', 'pinterest', 'ted', 'facebook']);
 
@@ -107,12 +115,16 @@ void main() {
       expect(id == 'generic' || id == 'browser-capture', isTrue, reason: k);
       expected.add(id);
     }
+    for (final id in liveNatives) {
+      expect(nativeSiteIds, contains(id));
+      expected.add(id);
+    }
     expect(measuredLiveSiteIds.toSet(), expected);
     expect(measuredLiveSiteIds, hasLength(expected.length));
     for (final id in measuredLiveSiteIds) {
       expect([...nativeSiteIds, ...siteTiers], contains(id));
     }
-    for (final v240 in ['facebook', 'pinterest', 'soop', 'linkedin', 'xiaohongshu', 'telegram', 'rumble', 'streamable', 'bluesky']) {
+    for (final v240 in ['linkedin', 'xiaohongshu', 'rumble']) {
       expect(measuredLiveSiteIds, isNot(contains(v240)), reason: '$v240 is a v2.4.0 native, not measured live');
     }
   });
