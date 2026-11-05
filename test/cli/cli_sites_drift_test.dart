@@ -2,35 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mida/cli/cli_sites.dart';
-
-/// Extractor class name -> the id `mida-cli sites` prints for it.
-const _idByClass = {
-  'YoutubeExtractor': 'youtube',
-  'TwitterExtractor': 'x',
-  'TikTokExtractor': 'tiktok',
-  'InstagramExtractor': 'instagram',
-  'NaverExtractor': 'naver-tv',
-  'ChzzkExtractor': 'chzzk',
-  'KakaoExtractor': 'kakao',
-  'DailymotionExtractor': 'dailymotion',
-  'TwitchExtractor': 'twitch',
-  'RedditExtractor': 'reddit',
-  'SoundCloudExtractor': 'soundcloud',
-  'BilibiliExtractor': 'bilibili',
-  'DouyinExtractor': 'douyin',
-  'NiconicoExtractor': 'niconico',
-  'OdyseeExtractor': 'odysee',
-  'VimeoExtractor': 'vimeo',
-  'FacebookExtractor': 'facebook',
-  'PinterestExtractor': 'pinterest',
-  'SoopExtractor': 'soop',
-  'LinkedInExtractor': 'linkedin',
-  'XiaohongshuExtractor': 'xiaohongshu',
-  'TelegramExtractor': 'telegram',
-  'RumbleExtractor': 'rumble',
-  'StreamableExtractor': 'streamable',
-  'BlueskyExtractor': 'bluesky',
-};
+import 'package:mida/core/extractors/extractor_site_ids.dart';
 
 /// The registry exposes no listing API and constructing it is not free, so
 /// this reads the builder's source: every `XxxExtractor(` in the primary
@@ -48,9 +20,9 @@ void main() {
   test('sites list matches the registry builder, in order', () {
     final classes = _nativeClassesInBuilder();
     expect(classes, isNotEmpty);
-    final unknown = classes.where((c) => !_idByClass.containsKey(c)).toList();
-    expect(unknown, isEmpty, reason: 'new extractor: add it to nativeSiteIds and _idByClass');
-    expect(nativeSiteIds, [for (final c in classes) _idByClass[c]]);
+    final unknown = classes.where((c) => !nativeExtractorIds.containsKey(c)).toList();
+    expect(unknown, isEmpty, reason: 'new extractor: add it to nativeExtractorIds');
+    expect(nativeSiteIds, [for (final c in classes) nativeExtractorIds[c]]);
   });
 
   test('measured_live is exactly what docs/coverage-corpus.md recorded as downloaded', () {

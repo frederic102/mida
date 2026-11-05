@@ -175,3 +175,11 @@ Downloaded natively (2026-11-03): facebook, pinterest, streamable, bluesky, soop
   not measured as downloaded.
 - linkedin, xiaohongshu: not measured (no public video URL without login, or a per-session
   xsec_token).
+
+## Repeating the live check
+
+`scripts/live_check.ps1` reruns this corpus through the CLI on demand (rows from the table above, with the
+v2.4.0 natives expected on their own tier; the list lives in `scripts/live_check_sites.json`). It reads the
+`extractor` field of each `result` line, so a site that downloaded through generic analysis while its native
+is broken is reported as `FALLBACK`, not credited to the native. It hits real sites and may start a headless
+browser; `-DryRun` validates the list offline. See the README "Live check" section.

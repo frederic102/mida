@@ -43,6 +43,8 @@ Each stdout line is one JSON object. stderr is debug text, ignore it. Parse the 
 - `{"event":"result","kind":"download","output_path":...,"bytes":...,"video":{...},"audio":{...}}`
   means success. Report `output_path` and size. Check `video`/`audio` are present before saying
   "video with sound".
+  `extractor` (also on `resolve`) names the tier that produced the media: a native id, `generic` or
+  `browser-capture`. A `generic` or `browser-capture` result for a site that has a native usually means the native failed or rejected the URL.
 - `{"event":"error","code":...,"message":...}` means failure. Quote the code and message.
 - `progress` and `status` lines are optional. Do not treat them as the result. Progress is per
   stage: it can drop back near 0 on a retry or when merging starts.

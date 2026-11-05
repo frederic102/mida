@@ -213,6 +213,10 @@ class MediaInfo {
   /// this has no match for a given request's host.
   final Map<String, List<CookieEntry>> cookiesByDomain;
 
+  /// Site id (`mida-cli sites`) of the extractor that produced this info,
+  /// set by `ExtractorRegistry`; null when built outside the registry.
+  final String? extractor;
+
   const MediaInfo({
     required this.id,
     required this.title,
@@ -225,6 +229,7 @@ class MediaInfo {
     required this.sourceUrl,
     this.requestHeaders = const {},
     this.cookiesByDomain = const {},
+    this.extractor,
   });
 
   /// Field-wise copy (phase 6 round 2 contract). The single place that
@@ -237,6 +242,8 @@ class MediaInfo {
     List<CaptionTrack>? captions,
     Map<String, String>? requestHeaders,
     Map<String, List<CookieEntry>>? cookiesByDomain,
+    String? extractor,
+    bool clearExtractor = false,
   }) =>
       MediaInfo(
         id: id,
@@ -250,6 +257,7 @@ class MediaInfo {
         sourceUrl: sourceUrl,
         requestHeaders: requestHeaders ?? this.requestHeaders,
         cookiesByDomain: cookiesByDomain ?? this.cookiesByDomain,
+        extractor: clearExtractor ? null : (extractor ?? this.extractor),
       );
 }
 

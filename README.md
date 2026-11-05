@@ -117,12 +117,13 @@ Events (`event` field):
 ```json
 {"event":"status","message":"Resolving..."}
 {"event":"progress","fraction":0.42}
-{"event":"result","kind":"download","output_path":"D:\\videos\\clip.mp4","bytes":1048576,"video":{"codec":"h264","width":1920,"height":1080,"duration_seconds":61.2},"audio":{"codec":"aac"},"attempts":1}
+{"event":"result","kind":"download","output_path":"D:\\videos\\clip.mp4","extractor":"youtube","bytes":1048576,"video":{"codec":"h264","width":1920,"height":1080,"duration_seconds":61.2},"audio":{"codec":"aac"},"attempts":1}
 {"event":"error","code":"NO_MEDIA_FOUND","message":"..."}
 ```
 
 `resolve` ends with `{"event":"result","kind":"resolve",...}` and `sites` and `version` end with a `result`
-of their own `kind`. Error messages have URL query strings redacted.
+of their own `kind`. Error messages have URL query strings redacted. The `resolve` and `download` results carry
+`extractor`: the `sites` id (a native id, `generic` or `browser-capture`) of the tier that produced the media.
 
 | Exit code | Meaning | Error codes |
 |-----------|---------|-------------|
@@ -167,6 +168,31 @@ browser capture use your signed-in Chrome profile (Chrome is required; Edge is n
 
 For agents, [`.claude/skills/mida-download/SKILL.md`](.claude/skills/mida-download/SKILL.md) describes
 the same workflow in a form Claude Code loads automatically.
+
+### Live check
+
+`scripts/live_check.ps1` (Windows PowerShell 5.1 or later) downloads one public URL per site from
+`scripts/live_check_sites.json` at 360p, headless, and compares the `extractor` in each result with the tier the
+corpus expects. A download that only succeeded through the generic or browser-capture tier shows as
+`FALLBACK` (the expected tier is broken). Other verdicts: `OK`, `BLOCKED` (exit 5, a policy stop), `FAIL`,
+`TIMEOUT`. It prints a table and writes `live-check-<date>.md` and `.json` to the output folder; the exit code
+is 1 when a `FAIL`, `FALLBACK` or `TIMEOUT` hits an entry without a `knownIssue` (a documented breakage in the
+corpus file); known issues are still shown. `OK` needs exit 0, a non-empty output file, and a successful ffprobe
+showing a video stream (audio for audio entries); an ffprobe that is missing or fails is a `FAIL`. Every run works
+in a fresh `run-<timestamp>` folder inside `-OutDir` and deletes only the site folders and logs it created there. CLI output goes to log files, and after each site the CLI's whole process tree (a headless browser or ffmpeg included) is killed. It needs
+a `mida-cli` built from this source (the result must carry `extractor`): the installed v2.4.0 build may predate
+it, and an older CLI aborts the run after the first site. It hits real sites and may start a headless Chrome or
+Edge, so run it only when you mean to. Known limit: child processes are found by walking parent ids, not
+through a Windows Job Object, so a grandchild whose own parent exited between checks, or one spawned during
+cleanup, can survive the run; check Task Manager for a stray headless browser after a run that timed out.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\live_check.ps1 -DryRun        # validate the corpus, no network
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\live_check.ps1 -Only youtube,pinterest -Keep
+```
+
+Options: `-Cli` (default the installed `mida-cli.exe`, else `dist\windows`), `-Only`, `-TimeoutSec` (240),
+`-OutDir` (parent of the run folders, default `%TEMP%\mida-live-check`), `-Keep` (keep the downloads).
 
 ## Building from Source
 

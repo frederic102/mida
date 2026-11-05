@@ -55,6 +55,7 @@ void main() {
       'author',
       'duration_seconds',
       'platform',
+      'extractor',
       'formats',
       'captions',
     ]);
@@ -83,6 +84,20 @@ void main() {
     expect(registry.resolved.single, Uri.parse(testUrl));
   });
 
+  test('resolve and download report which extractor produced the media', () async {
+    final info = sampleInfo().copyWith(extractor: 'pinterest');
+    final resolved = await runCli(['resolve', testUrl], registry: FakeRegistry.ok(info));
+    expect(resolved.last['extractor'], 'pinterest');
+    final downloaded = await runCli(['download', testUrl, '--out', tmp.path],
+        registry: FakeRegistry.ok(info), pipeline: FakePipeline());
+    expect(downloaded.exitCode, 0, reason: downloaded.stdoutText);
+    expect(downloaded.last['extractor'], 'pinterest');
+    // A pinned format keeps the extractor too (copyWith path).
+    final pinned = await runCli(['download', testUrl, '--out', tmp.path, '--format-id', 'muxed-720'],
+        registry: FakeRegistry.ok(info), pipeline: FakePipeline());
+    expect(pinned.last['extractor'], 'pinterest');
+  });
+
   test('resolve reports youtube as its platform enum name', () async {
     final run = await runCli(['resolve', 'https://www.youtube.com/watch?v=abc'], registry: FakeRegistry.ok());
     expect(run.last['platform'], 'youtube');
@@ -106,7 +121,7 @@ void main() {
       expect(progress[i], greaterThan(progress[i - 1]));
     }
     final r = run.last;
-    expect(r.keys.toList(), ['event', 'kind', 'output_path', 'bytes', 'video', 'audio', 'attempts']);
+    expect(r.keys.toList(), ['event', 'kind', 'output_path', 'extractor', 'bytes', 'video', 'audio', 'attempts']);
     expect(r['kind'], 'download');
     expect(r['output_path'], '${tmp.path}${Platform.pathSeparator}Sample clip.mp4');
     expect(r['bytes'], 5);

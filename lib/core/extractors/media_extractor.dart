@@ -1,6 +1,7 @@
 import '../net/retry_policy.dart';
 import 'fallback_failure.dart';
 import 'generic/embeds/embed_delegation.dart';
+import 'info_stamp.dart';
 import 'media_models.dart';
 
 /// Contract every platform-native extractor implements. `canHandle` must be
@@ -185,7 +186,7 @@ class ExtractorRegistry {
     MediaExtractionException failure;
     var forceFallThrough = false;
     try {
-      final info = _normalizeProtocols(await _attempt(extractor, url));
+      final info = _normalizeProtocols(await _attempt(extractor, url), extractor);
       if (info.formats.isNotEmpty) return info;
       // A successful extract with zero formats is not success: there is
       // nothing to download. Treated exactly like the catch-all
@@ -232,7 +233,7 @@ class ExtractorRegistry {
     final target = find(delegation.target);
     if (target == null || identical(target, _extractors.last)) return (info: null, failure: null);
     try {
-      final info = _normalizeProtocols(await _attempt(target, delegation.target));
+      final info = _normalizeProtocols(await _attempt(target, delegation.target), target);
       return (info: info.formats.isEmpty ? null : info, failure: null);
     } catch (error) {
       return (info: null, failure: asFallbackFailure(error));
@@ -305,7 +306,7 @@ class ExtractorRegistry {
     for (final attempt in remainingAttempts) {
       final isCatchAllAttempt = identical(attempt, catchAll);
       try {
-        final info = _normalizeProtocols(await _attempt(attempt, url));
+        final info = _normalizeProtocols(await _attempt(attempt, url), attempt);
         if (info.formats.isEmpty) {
           // Same rule as the top-level check in resolveInfo: an empty
           // format list is not success, even from a fallback - keep going
@@ -374,20 +375,6 @@ class ExtractorRegistry {
   // hand-rolled version is exactly what dropped `cookiesByDomain` in round
   // 1 (docs' own C1/N1 finding), and a field added to `MediaInfo` later can
   // never be silently missed here again.
-  static MediaInfo _normalizeProtocols(MediaInfo info) {
-    final needsChange = info.formats.any((f) => f.protocol != _protocolFor(f.container));
-    if (!needsChange) return info;
-    return info.copyWith(formats: [for (final f in info.formats) f.withProtocol(_protocolFor(f.container))]);
-  }
-
-  static String _protocolFor(String container) {
-    switch (container) {
-      case 'm3u8':
-        return 'hls';
-      case 'mpd':
-        return 'dash';
-      default:
-        return 'https';
-    }
-  }
+  // The rewrite itself (protocols, provenance stamp) lives in info_stamp.dart.
+  static MediaInfo _normalizeProtocols(MediaInfo info, MediaExtractor by) => normalizeAndStamp(info, by);
 }

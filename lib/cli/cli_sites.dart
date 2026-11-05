@@ -1,37 +1,13 @@
+import '../core/extractors/extractor_site_ids.dart';
+
 /// Platform-native extractors, in registry order
-/// (`lib/core/extractors/extractor_registry_builder.dart`). Hand-kept: the
-/// registry exposes no listing API. `test/cli/cli_sites_drift_test.dart`
-/// fails when the builder gains or loses an extractor without this list.
-const List<String> nativeSiteIds = [
-  'youtube',
-  'x',
-  'tiktok',
-  'instagram',
-  'naver-tv',
-  'chzzk',
-  'kakao',
-  'dailymotion',
-  'twitch',
-  'reddit',
-  'soundcloud',
-  'bilibili',
-  'douyin',
-  'niconico',
-  'odysee',
-  'vimeo',
-  'facebook',
-  'pinterest',
-  'soop',
-  'linkedin',
-  'xiaohongshu',
-  'telegram',
-  'rumble',
-  'streamable',
-  'bluesky',
-];
+/// (`lib/core/extractors/extractor_registry_builder.dart`), from the shared
+/// class-to-id table. `test/cli/cli_sites_drift_test.dart` fails when the
+/// builder gains or loses an extractor without a row there.
+final List<String> nativeSiteIds = List.unmodifiable(nativeExtractorIds.values);
 
 /// The catch-all tiers behind the natives, in the order they are tried.
-const List<String> siteTiers = ['generic', 'browser-capture'];
+final List<String> siteTiers = List.unmodifiable(tierExtractorIds.values);
 
 /// The ids from [nativeSiteIds] and [siteTiers] that have downloaded a
 /// real file in a recorded live run (`docs/coverage-corpus.md`: the

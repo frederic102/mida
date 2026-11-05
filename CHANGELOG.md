@@ -32,6 +32,10 @@ tests only; treat it as unconfirmed until a live run says otherwise.
 - `resolve` prints selection ids that `download --format-id` accepts: the
   extractor's id when it is short plain text, else `fmt-<n>`, so a signed
   URL used as an id is never printed and still selectable.
+- `resolve` and `download` `result` lines carry `extractor`, the id (as in
+  `mida-cli sites`) of the tier that produced the media: a native, `generic`
+  or `browser-capture`. Additive; nothing else changed. `scripts/live_check.ps1`
+  uses it to tell "native works" from "native broke, fallback saved it".
 - If a detached error ends a CLI run while it is still working, the run
   stops: exactly one terminal `error`, no later `result`, no file left.
 - Forced headless mode (`--headless`, `MIDA_HEADLESS=1`) for the

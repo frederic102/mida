@@ -177,6 +177,7 @@ Future<int> runDownloadCommand(CliContext ctx) async {
     final summary = await ctx.buildProbe().summarize(file.path);
     ctx.emitter.result('download', {
       'output_path': file.path,
+      'extractor': info.extractor,
       'bytes': await file.length(),
       ..._streamBlocks(summary),
       'attempts': attempts,

@@ -209,6 +209,7 @@ Future<int> _runResolve(CliContext ctx) async {
       'author': info.author,
       'duration_seconds': _seconds(info.duration),
       'platform': _platformOf(uri),
+      'extractor': info.extractor,
       'formats': [
         for (final (i, id) in formatSelectionIds(info.formats).indexed) _formatJson(id, info.formats[i]),
       ],
