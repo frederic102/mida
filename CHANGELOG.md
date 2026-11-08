@@ -97,6 +97,9 @@ tests only; treat it as unconfirmed until a live run says otherwise.
   (`/pin/<slug>--<id>/`), and the native Streamable extractor accepts
   3-character codes and the `https:https://` file URLs its API returns for
   some older videos. Before, those URLs fell back to generic analysis.
+- SoundCloud tracks that an anonymous client may only preview (30 s
+  `snipped` renditions) now end in `LOGIN_REQUIRED` instead of a 30 s file
+  passed off as the full track.
 
 ### Removed
 - The Settings "Dark Mode" switch. MiDa has only a dark theme, so the switch
