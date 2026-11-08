@@ -50,23 +50,23 @@ breakdown, to be measured by the lead.
 | twitch-vod | https://www.twitch.tv/videos/2863640137 | Native (Twitch) | |
 | twitch-clip | https://clips.twitch.tv/AnimatedOptimisticWasabiVoteNay | Native (Twitch) | |
 | reddit | https://www.reddit.com/r/aww/comments/1c0xhqk/ | Native (Reddit) | v.redd.it DASH manifest. |
-| soundcloud | https://soundcloud.com/rick-astley-official/never-gonna-give-you-up | Native (SoundCloud) | Audio only. |
+| soundcloud | https://soundcloud.com/rick-astley-official/never-gonna-give-you-up | Native (SoundCloud) | Audio only. Observed 2026-11-08: an anonymous client is offered only the 30 s `snipped` preview of this licensed track; the extractor reports `LOGIN_REQUIRED` (full playback needs a signed-in SoundCloud Go account), and the live check confirmed no fallback tier downloads the clip instead. The fixture captured 2026-09-05 already carries `snipped: true`, so the 2026-09-06 "downloaded" result was most likely that 30 s clip, accepted before the truncation check existed. |
 | bilibili | https://www.bilibili.com/video/BV1GJ411x7h7 | Native (Bilibili) | Live-test diagnosis on this id also uncovered and fixed a `ConcurrentModificationError` in the browser-capture manifest-recovery path used as its fallback; see `docs/plan-phase5-coverage.md`. |
 | douyin | https://www.douyin.com/video/7318947853764676900 | Native (Douyin) | The site's anti-bot layer is a JS-VM challenge that no plain HTTP client can solve by design; per `test/live/global_sites_live_test.dart`, this was not resolved within this pass's budget. |
 | niconico | https://www.nicovideo.jp/watch/sm9 | Native (Niconico) | Per `test/live/global_sites_live_test.dart`, current-site auth for this extractor was not resolved within this pass's budget. |
-| youku | https://v.youku.com/v_show/id_XNDI5ODI5NTQzNg==.html | Generic analysis | Works without a browser: `og:video` and a `videoId` are present directly in the HTML. |
+| youku | https://v.youku.com/v_show/id_XNDI5ODI5NTQzNg==.html | Generic analysis | Works without a browser: `og:video` and a `videoId` are present directly in the HTML. Superseded 2026-11-08: the page is now an Alibaba `x5secdata` captcha ("punish") shell with no `og:video`; a bot check, reported not bypassed (`NO_MEDIA_FOUND`). |
 | weibo-video | https://weibo.com/tv/show/1034:5080340418793999 | Browser capture | Weibo serves a visitor-verification interstitial to non-browser clients; needs a real browser session. |
 | vk-video | https://vk.com/video-30558759_456239017 | Browser capture | VK returns HTTP 418 to non-browser clients. Real `video/mp4`/`audio/mp4` traffic was captured on `okcdn.ru` once a browser session was used; that host's mimeType-without-extension URLs previously fell through the classifier and were added as a fallback (see `docs/plan-phase5-coverage.md`). The download stage separately hit an untrusted-TLS-certificate failure on this CDN. |
 | ok-ru | https://ok.ru/video/14543307672246 | Generic analysis | Works without a browser: `og:video` and `og:video:url` are present. Shares the same untrusted-TLS-certificate CDN issue noted for vk-video. |
 | odysee | https://odysee.com/@lbry:3f/odysee:7 | Native (Odysee) | |
 | rumble | https://rumble.com/v2r1rw6-top-7-most-viewed-videos.html (swapped 2026-09-06: previous URL was a 24/7 live stream) | Browser capture | Cloudflare bot challenge blocks a plain HTTP request; needs a real browser. |
-| bandcamp | https://booelectric.bandcamp.com/track/want-for-nothing | Browser capture | A Fastly WAF blocks non-browser clients site-wide. `audio/mpeg` streams under an extension-less path (`mp3-128`) were previously dropped by the URL-extension check; fixed by trusting the server's own mimeType when the URL has no recognizable extension. |
+| bandcamp | https://booelectric.bandcamp.com/track/want-for-nothing | Browser capture | A Fastly WAF blocks non-browser clients site-wide. `audio/mpeg` streams under an extension-less path (`mp3-128`) were previously dropped by the URL-extension check; fixed by trusting the server's own mimeType when the URL has no recognizable extension. 2026-11-08: this track is now `tralbum_subscriber_only` with `file: null` in `data-tralbum`, so there is no anonymous stream and browser capture sees no media (`NO_MEDIA_FOUND`); the earlier download was while the track was public. |
 | pinterest | https://www.pinterest.com/pin/diy-pin-tutorial-video--41025046600764526/ (swapped 2026-09-06: native video pin) | Browser capture | Known limitation, not fixed this pass: in an anonymous session this pin URL redirects to a generic feed page and the pin id itself is lost, with no reliable page signal to detect that case without risking false positives on other pins. |
 | ted | https://www.ted.com/talks/simon_sinek_how_great_leaders_inspire_action | Generic analysis | Works without a browser: `og:title` present. |
-| coub | https://coub.com/view/3dl4uh | Generic analysis | Works without a browser: `og:video` points directly at an `.mp4`. |
+| coub | https://coub.com/view/3dl4uh | Browser capture | Superseded 2026-11-08: a plain HTTP client now gets `403` from nginx (a Chrome user agent does not help), so generic analysis fails; the real browser tier downloads it. |
 | facebook | https://www.facebook.com/NatGeoAnimals/videos/reindeer-national-geographic/371360365972647/ | Generic analysis | Works without a browser: `og:type` is `video.other` with an oembed_video link present. Facebook Watch (the dedicated tab) was discontinued in 2023; this direct video URL still resolves. |
 | tumblr | https://nasa.tumblr.com/post/616923388224667648 | Generic analysis | Swapped 2026-09-06: the previously listed staff post had no video (an anonymous-session redirect to the blog root, confirmed via live diagnosis, not a capture-engine bug). This nasa.tumblr.com post is the replacement. |
-| bbc-news | https://www.bbc.co.uk/news/videos/cz7z93zde3po | Generic analysis | Works without a browser: `og:title` plus a JSON-LD `VideoObject`. |
+| bbc-news | https://www.bbc.co.uk/news/videos/cz7z93zde3po | Browser capture | Superseded 2026-11-08: the JSON-LD `VideoObject` no longer carries `contentUrl` and the page has no `og:video`; the stream is requested client-side, so only the browser tier finds it. |
 | nytimes | https://www.nytimes.com/video/multimedia/100000004703252/stephen-jones-talks-top-hats.html | Browser capture | Bot protection returns 403 to a plain HTTP request; needs a real browser. |
 | streamable | https://streamable.com/moo | Generic analysis | Works without a browser: `og:video`/`.mp4` hint present. |
 | archive-org | https://archive.org/details/BigBuckBunny_124 | Generic analysis | Works without a browser. |
@@ -175,6 +175,14 @@ Downloaded natively (2026-11-03): facebook, pinterest, streamable, bluesky, soop
   not measured as downloaded.
 - linkedin, xiaohongshu: not measured (no public video URL without login, or a per-session
   xsec_token).
+
+## Live check regressions (2026-11-08, headless CLI)
+
+Five rows differed from their expectation. soundcloud: the track serves anonymous clients only a `snipped`
+30 s preview, so the old "downloaded" was a clip; now a clear `LOGIN_REQUIRED` (code fix in
+`soundcloud_track_parser.dart`). youku: captcha shell (policy, `knownIssue`). bandcamp: subscriber-only
+track (policy, `knownIssue`). coub and bbc-news: no longer readable without a browser, so `expect` is
+`browser-capture` (they still download). Detail per row in the table above.
 
 ## Repeating the live check
 

@@ -1,6 +1,6 @@
 import '../media_models.dart';
 
-typedef SoundCloudTranscoding = ({String url, String protocol, String? mimeType, bool isHls});
+typedef SoundCloudTranscoding = ({String url, String protocol, String? mimeType, bool isHls, bool snipped});
 
 typedef SoundCloudTrackInfo = ({
   String id,
@@ -24,16 +24,28 @@ class SoundCloudTrackParser {
 
   /// Throws [MediaExtractionException] (`UNSUPPORTED_MEDIA`) when
   /// `media.transcodings` is empty - a track still processing server-side,
-  /// or one this account has no listening rights for at all (distinct
-  /// from a "snipped"/preview-only transcoding, which is still playable
-  /// and not an error here - SoundCloud gates the *content* to a 30s
-  /// preview for unlicensed tracks, not the API response).
+  /// or one this account has no listening rights for at all.
+  ///
+  /// A `snipped` transcoding is SoundCloud's 30 second preview of a
+  /// licensed track, while `full_duration` still names the whole track.
+  /// Live 2026-11-08 the Rick Astley track offered only snipped renditions
+  /// to an anonymous client, and the file that came back was 30 s long.
+  /// Snipped renditions are dropped; if nothing else is left the result is
+  /// `LOGIN_REQUIRED` (full playback needs a signed-in Go account), the
+  /// honest reason, instead of a "full" track that is really a clip.
   SoundCloudTrackInfo parse(Map<String, dynamic> track) {
-    final transcodings = _parseTranscodings(track['media']);
-    if (transcodings.isEmpty) {
+    final all = _parseTranscodings(track['media']);
+    if (all.isEmpty) {
       throw const MediaExtractionException(
         'UNSUPPORTED_MEDIA',
         'SoundCloud returned no playable renditions for this track.',
+      );
+    }
+    final transcodings = all.where((t) => !t.snipped).toList();
+    if (transcodings.isEmpty) {
+      throw const MediaExtractionException(
+        'LOGIN_REQUIRED',
+        'SoundCloud only serves a 30 second preview of this track without a signed-in SoundCloud Go account.',
       );
     }
 
@@ -61,7 +73,13 @@ class SoundCloudTrackParser {
       final format = entry['format'];
       final protocol = format is Map ? format['protocol'] as String? ?? 'progressive' : 'progressive';
       final mimeType = format is Map ? format['mime_type'] as String? : null;
-      result.add((url: url, protocol: protocol, mimeType: mimeType, isHls: protocol == 'hls'));
+      result.add((
+        url: url,
+        protocol: protocol,
+        mimeType: mimeType,
+        isHls: protocol == 'hls',
+        snipped: entry['snipped'] == true,
+      ));
     }
 
     // Progressive (plain mp3, a single ranged-GET-able file) first, HLS
