@@ -26,7 +26,7 @@
   { "id": "facebook", "url": "https://www.facebook.com/NatGeoAnimals/videos/reindeer-national-geographic/371360365972647/", "expect": "facebook" },
   { "id": "tumblr", "url": "https://nasa.tumblr.com/post/616923388224667648", "expect": "generic" },
   { "id": "bbc-news", "url": "https://www.bbc.co.uk/news/videos/cz7z93zde3po", "expect": "browser-capture" },
-  { "id": "nytimes", "url": "https://www.nytimes.com/video/multimedia/100000004703252/stephen-jones-talks-top-hats.html", "expect": "browser-capture" },
+  { "id": "nytimes", "url": "https://www.nytimes.com/video/multimedia/100000004703252/stephen-jones-talks-top-hats.html", "expect": "generic" },
   { "id": "streamable", "url": "https://streamable.com/moo", "expect": "streamable" },
   { "id": "archive-org", "url": "https://archive.org/details/BigBuckBunny_124", "expect": "generic" },
   { "id": "vimeo-public", "url": "https://vimeo.com/22439234", "expect": "vimeo", "knownIssue": "Exposed formats are byte-range slices of one CMAF file with no init segment; listed as still failing in phase 6." },
