@@ -40,20 +40,20 @@
 
 ```mermaid
 flowchart LR
-  URL([URL]) ==> REG{"Registry: first native<br/>that accepts the URL"}
-  REG ==>|"known site"| NAT["Native extractor<br/>25 sites"]
-  REG ==>|"any other http or https URL"| GEN["Generic page analysis<br/>meta, JSON-LD, inline JSON, HLS, DASH, embeds"]
-  NAT -.->|"technique failed or login wall"| GEN
-  GEN -.->|"embedded player of a known site"| NAT
-  GEN -.->|"nothing found"| CAP["Browser capture<br/>real Chrome or Edge, DevTools protocol"]
-  NAT ==> SEL["Rank formats"]
-  GEN ==> SEL
-  CAP ==> SEL
-  SEL ==> DL["Download<br/>ranged HTTPS, or ffmpeg for HLS and DASH"]
-  DL ==> MRG["Merge video and audio<br/>ffmpeg"]
-  MRG ==> CHK{"ffprobe check:<br/>expected streams present?"}
-  CHK ==>|"yes"| OUT([File])
-  CHK -.->|"no: try the next candidate"| SEL
+  IN(["URL"]) --> REG{"Registry"}
+  REG -->|known site| NAT["Native extractor (25 sites)"]
+  REG -->|other http or https URL| GEN["Generic page analysis"]
+  NAT -.->|failed or login wall| GEN
+  GEN -.->|embedded player of a known site| NAT
+  GEN -.->|nothing found| CAP["Browser capture (real Chrome or Edge)"]
+  NAT --> SEL["Rank formats"]
+  GEN --> SEL
+  CAP --> SEL
+  SEL --> DL["Download (HTTPS or ffmpeg)"]
+  DL --> MRG["Merge video and audio"]
+  MRG --> CHK{"ffprobe check"}
+  CHK -->|streams present| DONE(["Saved file"])
+  CHK -.->|missing stream: next candidate| SEL
 ```
 
 Solid arrows are the normal path, dotted arrows are fall-through and retry. The order is built in `lib/core/extractors/extractor_registry_builder.dart` and the fall-through rules live in `ExtractorRegistry.resolveInfo` (`lib/core/extractors/media_extractor.dart`). DRM, bot checks and login walls end the chain with a clear error instead of a workaround. The download side is `MediaDownloadPipeline` (`lib/features/download/services/media_download_pipeline.dart`), which tries up to three ranked format candidates (plus a small budget of retries when a probe corrects the format's metadata) before giving up.
