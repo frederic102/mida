@@ -190,4 +190,4 @@ track (policy, `knownIssue`). coub and bbc-news: no longer readable without a br
 v2.4.0 natives expected on their own tier; the list lives in `scripts/live_check_sites.json`). It reads the
 `extractor` field of each `result` line, so a site that downloaded through generic analysis while its native
 is broken is reported as `FALLBACK`, not credited to the native. It hits real sites and may start a headless
-browser; `-DryRun` validates the list offline. See the README "Live check" section.
+browser; `-DryRun` validates the list offline. See the "Live check" section of `docs/cli.md`.
