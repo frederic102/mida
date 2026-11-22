@@ -23,6 +23,19 @@ DRM, live streams and most sign-in-only content are not supported.
   `--format-id <id from resolve>`, `--captions` (Korean + English) or `--subtitles ko|en`,
   `--quiet` (no progress lines). `--quality`, `--container` and captions do nothing with
   `--type audio`; the audio options do nothing without it (the CLI prints a `Note:` status line).
+- A YouTube channel or playlist (`@handle`, `/channel/UC...`, `/c/name`, `/user/name`, `/playlist?list=...`):
+  - `mida-cli list '<url>' [--limit N]` prints `items: [{id, url, title, published}]` (default cap 500; check
+    `truncated`). Downloads nothing. Show the count to the user before a bulk download.
+  - `mida-cli download '<url>' --all --archive '<file>' --limit N --out '<dir>' --headless` downloads each item
+    (same download options as above, not `--format-id`). Always pass `--archive` so a rerun skips saved videos.
+    Stdout has a `result` or `error` line per item (with `index` and `id`), and the LAST line is
+    `{"kind":"batch","total","downloaded","skipped","failed","stopped"}`. Report those counts, then check the exit
+    code: it is the worst item class, so 5 means at least one item was refused and 0 means every attempted item
+    saved. `stopped` set (`policy`, `rate_limited`, `environment`, `usage`) means the batch quit early: report and
+    stop, do not restart in a loop.
+  - `mida-cli sync --subscriptions '<file>' [--archive '<file>'] --out '<dir>'` downloads uploads newer than each
+    subscription. It rewrites the subscriptions file (`last_checked`, `channel_id`). Only run it when the user
+    asked for it; the file format is in `AGENTS.md`.
 - `mida-cli sites` lists supported platforms; `measured_live` names the ones confirmed by a real
   download (say "not yet confirmed live" for the others). `mida-cli version` prints the version.
   `mida-cli help` prints usage.
@@ -67,7 +80,7 @@ Source of truth: `lib/cli/cli_exit.dart`.
 - 5 policy refusal: `DRM_PROTECTED`, `DRM`, `LOGIN_REQUIRED`, `HEADLESS_BLOCKED`, `BOT_CHECK_REQUIRED`,
   `PRIVATE`, `AGE_VERIFICATION_REQUIRED`, `CONTENT_CHECK_REQUIRED`.
 - 6 environment: `BROWSER_MISSING`, `FFMPEG_MISSING`, `NETWORK`, `OUTPUT_DIR_UNAVAILABLE`,
-  `PROCESS_START_FAILED`.
+  `ARCHIVE_UNAVAILABLE`, `PROCESS_START_FAILED`.
 - 7 `RATE_LIMITED`: wait, do not hammer.
 - 8 stdout was closed early (for example piped into `head`). The download may or may not have
   completed: check the output folder before rerunning, and rerun without truncating the output. A

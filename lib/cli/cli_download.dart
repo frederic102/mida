@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../core/extractors/media_extractor.dart';
 import '../core/extractors/media_models.dart';
+import '../core/extractors/youtube/youtube_lister.dart';
 import '../core/services/download_settings.dart';
 import '../core/services/ffmpeg_locator.dart';
 import '../core/utils/url_parser.dart';
@@ -31,6 +32,10 @@ class CliContext {
   final ExtractorRegistry Function() buildRegistry;
   final MediaDownloadPipeline Function() buildPipeline;
   final CliStreamProbe Function() buildProbe;
+  final YoutubeLister Function() buildLister;
+
+  /// Sleeps between batch items (tests pass a no-op).
+  final Future<void> Function(Duration) pause;
 
   CliContext({
     required this.request,
@@ -41,7 +46,24 @@ class CliContext {
     required this.buildRegistry,
     required this.buildPipeline,
     required this.buildProbe,
+    required this.buildLister,
+    required this.pause,
   });
+
+  /// This run's context aimed at one batch item: its own request and
+  /// emitter, everything else shared.
+  CliContext forItem(CliRequest itemRequest, CliEmitter itemEmitter) => CliContext(
+        request: itemRequest,
+        emitter: itemEmitter,
+        err: err,
+        env: env,
+        ffmpegEnv: ffmpegEnv,
+        buildRegistry: buildRegistry,
+        buildPipeline: buildPipeline,
+        buildProbe: buildProbe,
+        buildLister: buildLister,
+        pause: pause,
+      );
 
   /// Emits [failure] as the `error` event and returns its exit code.
   int fail(CliFailure failure) {

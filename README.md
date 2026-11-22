@@ -101,6 +101,9 @@ as instructions.
 |---------|--------------|
 | `resolve <url> [--login-session] [--headless]` | Lists title, author, duration, platform, formats and caption languages. Downloads nothing. |
 | `download <url> [--out DIR] [--type video\|audio] [--quality best\|2160\|1440\|1080\|720\|480\|360] [--container mp4\|webm\|mkv] [--audio-format mp3\|m4a\|opus\|flac\|wav] [--audio-quality best\|320\|256\|128] [--format-id ID] [--captions] [--subtitles ko\|en\|ko,en] [--login-session] [--headless] [--ffmpeg PATH] [--quiet]` | Downloads to disk. `--quiet` drops progress events. `--captions` means Korean + English. |
+| `list <url> [--limit N]` | YouTube channel or playlist only. `result` with `kind: "list"`, `extractor`, `title`, `count`, `truncated` and `items: [{id, url, title, published}]` (`published` is null here: the page only shows "8 days ago"). Default cap 500 items, at most 5000. |
+| `download <channel-or-playlist-url> --all [--limit N] [--archive FILE]` plus the usual download options except `--format-id` | Downloads each item in order: one `result` per item (`kind: "download"` or `"skipped"`, with `index` and `id`; a failed item is an `error` line with the same fields), then a final `result` with `kind: "batch"` (`total`, `downloaded`, `skipped`, `failed`, `stopped`). `--archive` records downloaded ids so a rerun skips them. Exit code is 0 when every attempted item worked, else the most severe item class (5 policy, 6 environment, 7 rate limit, 4 download, 3 extraction). Pauses between items; three refusals (5), rate limits (7) or environment errors (6) in a row stop the batch (`stopped`). |
+| `sync --subscriptions FILE [--archive FILE]` plus the usual download options except `--format-id` | Reads the JSON subscriptions file, checks each channel's latest uploads (RSS) and downloads those published after the subscription's `created_at` that are not in the archive (default `FILE.archive`). Same output as `--all` plus `channels` and `channels_failed`; writes `channel_id` and `last_checked` back into the file. A file that does not parse is exit 2, never overwritten. |
 | `sites` | Lists native extractors (`native`), the generic fallback tiers (`tiers`), and `measured_live`: the ids that have downloaded a real file in a recorded live run (`docs/coverage-corpus.md`). Of the v2.4.0 natives, only facebook, pinterest, soop, telegram, streamable and bluesky are in `measured_live` (2026-11-03 headless check). |
 | `version` | Prints the version. |
 | `help` (or `--help`, `-h`) | Prints usage as a `result` with a `usage` field, exit 0. |
@@ -111,6 +114,10 @@ Options that cannot affect the chosen `--type` (`--quality`, `--container`, capt
 `--type audio`; the audio options without it) are reported as a `Note:` status line and ignored.
 `output_path` is always absolute. Progress is per stage, not for the whole job: a retry with another
 format or the merge step can start again near 0.
+
+Known limits of channel subscriptions (`sync`):
+- Saving the subscriptions file rewrites only the fields MiDa knows (`source`, `channel_id`, `title`, `created_at`, `output_dir`, `last_checked`); any other field you add by hand is dropped on the next save.
+- The RSS reader is built for YouTube's feed only. It does not reject every malformed attribute separator or an undeclared attribute prefix, so a feed with those is read as long as its elements are well formed.
 
 Events (`event` field):
 

@@ -36,6 +36,15 @@ class CliAborted implements Exception {
   String toString() => 'The command was stopped after an earlier error.';
 }
 
+/// A string the emitter prints as is, without URL redaction. Only for text
+/// the CLI built itself from validated parts (a watch URL made from an
+/// 11-character video id), never for anything copied from a page.
+class CliTrusted {
+  final String value;
+
+  const CliTrusted(this.value);
+}
+
 class CliEmitter {
   final StringSink _out;
   final bool _quiet;
@@ -66,6 +75,7 @@ class CliEmitter {
   }
 
   Object? _sanitize(Object? value) {
+    if (value is CliTrusted) return value.value;
     if (value is String) return _redact(value);
     if (value is double) return value.isFinite ? value : null;
     if (value is Map) return {for (final e in value.entries) e.key.toString(): _sanitize(e.value)};
@@ -88,6 +98,10 @@ class CliEmitter {
     _lastProgress = clamped;
     _emit({'event': 'progress', 'fraction': double.parse(clamped.toStringAsFixed(4))});
   }
+
+  /// A non-terminal event (one item of a batch). The run's own terminal
+  /// `result` or `error` still ends it.
+  void item(Map<String, Object?> event) => _emit(event);
 
   /// Terminal: after it, this run emits nothing more.
   void result(String kind, Map<String, Object?> fields) {

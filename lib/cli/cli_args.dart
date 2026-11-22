@@ -30,11 +30,68 @@ class CliRequest {
   final String? formatId;
   final String? ffmpeg;
 
+  /// `download --all`: the URL is a channel or playlist, download every item.
+  final bool all;
+
+  /// `--limit N` for `list` and `download --all`; null = the default cap.
+  final int? limit;
+
+  /// `--archive FILE`: downloaded video ids, so a rerun skips them.
+  final String? archive;
+
+  /// `sync --subscriptions FILE`.
+  final String? subscriptions;
+
   /// Option names the user actually typed (without `--`), so the CLI can
   /// tell "left at the default" from "asked for" and warn on no-op combos.
   final Set<String> given;
 
+  /// The same request aimed at another [url] as a single-video download.
+  CliRequest forItem(String url) => CliRequest(
+        command: 'download',
+        url: url,
+        quiet: quiet,
+        headless: headless,
+        loginSession: loginSession,
+        captions: captions,
+        outDir: outDir,
+        type: type,
+        quality: quality,
+        audioFormat: audioFormat,
+        audioQuality: audioQuality,
+        container: container,
+        subtitles: subtitles,
+        ffmpeg: ffmpeg,
+      );
+
+  /// The same request with another output folder (a subscription's own).
+  CliRequest withOutDir(String? dir) => CliRequest(
+        command: command,
+        url: url,
+        quiet: quiet,
+        headless: headless,
+        loginSession: loginSession,
+        captions: captions,
+        outDir: dir ?? outDir,
+        type: type,
+        quality: quality,
+        audioFormat: audioFormat,
+        audioQuality: audioQuality,
+        container: container,
+        subtitles: subtitles,
+        ffmpeg: ffmpeg,
+        all: all,
+        limit: limit,
+        archive: archive,
+        subscriptions: subscriptions,
+        given: given,
+      );
+
   const CliRequest({
+    this.all = false,
+    this.limit,
+    this.archive,
+    this.subscriptions,
     required this.command,
     this.url,
     this.quiet = false,
@@ -77,11 +134,15 @@ class CliRequest {
 }
 
 /// One-line usage, also the `help` result.
-const cliUsage = 'Usage: mida-cli <resolve|download|sites|version|help> [url] [options]. '
+const cliUsage = 'Usage: mida-cli <resolve|download|list|sync|sites|version|help> [url] [options]. '
     'resolve <url> [--login-session] [--headless]; '
     'download <url> [--out DIR] [--type video|audio] [--quality best|2160|1440|1080|720|480|360] '
     '[--container mp4|webm|mkv] [--audio-format mp3|m4a|opus|flac|wav] [--audio-quality best|320|256|128] '
-    '[--format-id ID] [--captions] [--subtitles ko|en|ko,en] [--login-session] [--headless] [--ffmpeg PATH]; '
+    '[--format-id ID] [--captions] [--subtitles ko|en|ko,en] [--login-session] [--headless] [--ffmpeg PATH] '
+    '[--all [--limit N] [--archive FILE]] (--all: the URL is a YouTube channel or playlist, download every item); '
+    'list <channel-or-playlist-url> [--limit N]; '
+    'sync --subscriptions FILE [--archive FILE] (plus the download options except --format-id): '
+    'download new uploads of the subscribed channels; '
     'every command accepts --quiet and --json (the default and only format), before or after the command. '
     'Quote the URL in single quotes in bash and PowerShell.';
 
@@ -96,12 +157,18 @@ const _valueOptions = {
   'format-id',
   'ffmpeg',
 };
-const _flagOptions = {'captions', 'login-session', 'headless', 'quiet', 'json'};
+const _flagOptions = {'captions', 'login-session', 'headless', 'quiet', 'json', 'all'};
 const _globalFlags = {'quiet', 'json'};
+const _maxLimit = 5000;
 
 const _allowedOptions = <String, Set<String>>{
   'resolve': {'login-session', 'headless', 'quiet', 'json'},
-  'download': {..._valueOptions, ..._flagOptions},
+  'download': {..._valueOptions, ..._flagOptions, 'limit', 'archive'},
+  'list': {'limit', 'quiet', 'json'},
+  'sync': {
+    'out', 'type', 'quality', 'container', 'audio-format', 'audio-quality', 'subtitles', 'ffmpeg', //
+    'captions', 'login-session', 'headless', 'quiet', 'json', 'archive', 'subscriptions',
+  },
   'sites': _globalFlags,
   'version': _globalFlags,
   'help': _globalFlags,
@@ -180,17 +247,40 @@ CliRequest parseCliArgs(List<String> args) {
     values[name] = value;
   }
 
-  final needsUrl = command == 'resolve' || command == 'download';
+  final needsUrl = command == 'resolve' || command == 'download' || command == 'list';
   if (needsUrl && positionals.length != 1) {
     throw CliUsageError('"$command" needs exactly one <url>. $cliUsage');
   }
   if (!needsUrl && positionals.isNotEmpty) {
     throw CliUsageError('"$command" takes no arguments. $cliUsage');
   }
+  final batch = command == 'download' && flags.contains('all');
+  if (command == 'download' && !batch) {
+    for (final o in const ['limit', 'archive']) {
+      if (values.containsKey(o)) throw CliUsageError('Option --$o needs --all.');
+    }
+  }
+  if (batch && values.containsKey('format-id')) {
+    throw const CliUsageError('--format-id pins one video and cannot be combined with --all.');
+  }
+  if (command == 'sync' && !values.containsKey('subscriptions')) {
+    throw const CliUsageError('"sync" needs --subscriptions FILE. $cliUsage');
+  }
+  int? limit;
+  if (values.containsKey('limit')) {
+    limit = int.tryParse(values['limit']!);
+    if (limit == null || limit < 1 || limit > _maxLimit) {
+      throw CliUsageError('Invalid value "${values['limit']}" for --limit. Use a number from 1 to $_maxLimit.', code: 'INVALID_VALUE');
+    }
+  }
 
   return CliRequest(
     command: command,
     url: needsUrl ? positionals.single : null,
+    all: batch,
+    limit: limit,
+    archive: values['archive'],
+    subscriptions: values['subscriptions'],
     quiet: flags.contains('quiet'),
     headless: flags.contains('headless'),
     loginSession: flags.contains('login-session'),

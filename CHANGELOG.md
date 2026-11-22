@@ -38,6 +38,17 @@ tests only; treat it as unconfirmed until a live run says otherwise.
   uses it to tell "native works" from "native broke, fallback saved it".
 - If a detached error ends a CLI run while it is still working, the run
   stops: exactly one terminal `error`, no later `result`, no file left.
+- YouTube channel and playlist bulk download in `mida-cli` (CLI part of Phase
+  8, `docs/plan-phase8-channels.md`): `list <url>` prints the videos of a
+  channel (`@handle`, `/channel/UC...`, `/c/name`, `/user/name`) or playlist,
+  `download <url> --all [--limit N] [--archive FILE]` downloads them one by
+  one (a `result` per item, then a `batch` summary; the archive file makes a
+  rerun skip what is already saved), and `sync --subscriptions FILE` downloads
+  uploads that are newer than each subscription and not yet in the archive.
+  Pauses between items, back-off on `RATE_LIMITED`, and a stop after three
+  refusals in a row. Uses YouTube's public web endpoints only. New core pieces
+  the GUI reuses: the lister, the download archive and the subscriptions file
+  model. Offline tests only; not measured live.
 - Forced headless mode (`--headless`, `MIDA_HEADLESS=1`) for the
   browser-capture tier, with an honest `HEADLESS_BLOCKED` result instead of
   any attempt to get past a bot check. Not measured live.

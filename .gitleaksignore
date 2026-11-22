@@ -3,3 +3,10 @@
 test/core/extractors/bluesky/bluesky_extractor_test.dart:generic-api-key:223
 # Throwaway self-signed key for the hermetic loopback TLS test server; trusted only inside those tests, protects nothing.
 test/core/extractors/native_http/fake_tls_identity.dart:private-key:29
+# Reviewed 2026-11-22: YouTube browse continuation tokens (base64 of a public channel or playlist id plus
+# a page cursor) in captured public pages; they grant nothing.
+test/fixtures/youtube_list/channel_initial.json:generic-api-key:1
+test/fixtures/youtube_list/channel_continuation.json:generic-api-key:1
+test/fixtures/youtube_list/playlist_initial.json:generic-api-key:1
+test/fixtures/youtube_list/playlist_continuation.json:generic-api-key:1
+test/fixtures/youtube_list/playlist_paged_initial.json:generic-api-key:1

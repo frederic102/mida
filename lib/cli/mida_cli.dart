@@ -4,10 +4,12 @@ import 'dart:io';
 import '../core/extractors/extractor_registry_builder.dart';
 import '../core/extractors/media_extractor.dart';
 import '../core/extractors/media_models.dart';
+import '../core/extractors/youtube/youtube_lister.dart';
 import '../core/services/ffmpeg_locator.dart';
 import '../core/utils/url_parser.dart';
 import '../features/download/services/media_download_pipeline.dart';
 import 'cli_args.dart';
+import 'cli_batch.dart';
 import 'cli_download.dart';
 import 'cli_events.dart';
 import 'cli_exit.dart';
@@ -15,6 +17,7 @@ import 'cli_format_ids.dart';
 import 'cli_output_sink.dart';
 import 'cli_sites.dart';
 import 'cli_stream_probe.dart';
+import 'cli_sync.dart';
 import 'cli_version.dart';
 
 export 'cli_version.dart';
@@ -85,6 +88,8 @@ Future<int> runMidaCliGuarded(
   RegistryBuilder? registryBuilder,
   PipelineFactory? pipelineFactory,
   ProbeFactory? probeFactory,
+  YoutubeLister? lister,
+  Future<void> Function(Duration)? pause,
   CliRunState? runState,
 }) {
   final sink = out is CliOutputSink ? out : CliOutputSink(out ?? stdout);
@@ -106,6 +111,8 @@ Future<int> runMidaCliGuarded(
       registryBuilder: registryBuilder,
       pipelineFactory: pipelineFactory,
       probeFactory: probeFactory,
+      lister: lister,
+      pause: pause,
       runState: state,
     ));
   }, (error, stack) {
@@ -138,6 +145,8 @@ Future<int> runMidaCli(
   RegistryBuilder? registryBuilder,
   PipelineFactory? pipelineFactory,
   ProbeFactory? probeFactory,
+  YoutubeLister? lister,
+  Future<void> Function(Duration)? pause,
   CliRunState? runState,
 }) async {
   final state = runState ?? CliRunState();
@@ -184,9 +193,18 @@ Future<int> runMidaCli(
         (registryBuilder ?? buildExtractorRegistry)(useBrowserLoginSession: request.loginSession, forceHeadless: headless),
     buildPipeline: () => pipeline ?? (pipelineFactory ?? _defaultPipeline)(ffmpegEnv),
     buildProbe: () => (probeFactory ?? _defaultProbe)(ffmpegEnv),
+    buildLister: () => lister ?? YoutubeLister(),
+    pause: pause ?? Future<void>.delayed,
   );
-  if (request.command == 'resolve') return _runResolve(ctx);
-  return runDownloadCommand(ctx);
+  switch (request.command) {
+    case 'resolve':
+      return _runResolve(ctx);
+    case 'list':
+      return runListCommand(ctx);
+    case 'sync':
+      return runSyncCommand(ctx);
+  }
+  return request.all ? runDownloadAll(ctx) : runDownloadCommand(ctx);
 }
 
 /// The enum name for the four hand-detected platforms, else the bare host.

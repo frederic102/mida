@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCBR8-60-B28hp2BmDPdntcQ"/>
+ <id>yt:channel:BR8-60-B28hp2BmDPdntcQ</id>
+ <yt:channelId>BR8-60-B28hp2BmDPdntcQ</yt:channelId>
+ <title>YouTube</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ"/>
+ <author>
+  <name>YouTube</name>
+  <uri>https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ</uri>
+ </author>
+  <entry>
+  <id>yt:video:QwhynRkyiYQ</id>
+  <yt:videoId>QwhynRkyiYQ</yt:videoId>
+  <yt:channelId>UCBR8-60-B28hp2BmDPdntcQ</yt:channelId>
+  <title>Oprah said add to cart, so of course, we listened! 🎁</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/QwhynRkyiYQ"/>
+  <author>
+   <name>YouTube</name>
+   <uri>https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ</uri>
+  </author>
+  <published>2026-11-21T20:00:40+00:00</published>
+  <updated>2026-11-22T05:04:56+00:00</updated>
+  <media:group>
+   <media:title>Oprah said add to cart, so of course, we listened! 🎁</media:title>
+   <media:content url="https://www.youtube.com/v/QwhynRkyiYQ?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i2.ytimg.com/vi/QwhynRkyiYQ/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Watch @Oprah surprise deserving caregivers with gifts and shop her picks right from the video. #YouTubeShopping</media:description>
+   
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:FMzaMmbtVD0</id>
+  <yt:videoId>FMzaMmbtVD0</yt:videoId>
+  <yt:channelId>UCBR8-60-B28hp2BmDPdntcQ</yt:channelId>
+  <title>red carpet odds were in our favor 🤩 happy premiere day to the hunger games: sunrise on the reaping</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/FMzaMmbtVD0"/>
+  <author>
+   <name>YouTube</name>
+   <uri>https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ</uri>
+  </author>
+  <published>2026-11-20T23:00:25+00:00</published>
+  <updated>2026-11-22T02:15:55+00:00</updated>
+  <media:group>
+   <media:title>red carpet odds were in our favor 🤩 happy premiere day to the hunger games: sunrise on the reaping</media:title>
+   <media:content url="https://www.youtube.com/v/FMzaMmbtVD0?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i3.ytimg.com/vi/FMzaMmbtVD0/hqdefault.jpg" width="480" height="360"/>
+   <media:description></media:description>
+   
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:3mwmwKBb44c</id>
+  <yt:videoId>3mwmwKBb44c</yt:videoId>
+  <yt:channelId>UCBR8-60-B28hp2BmDPdntcQ</yt:channelId>
+  <title>and the crowd goes wild! @VanossGaming had a  🚌and a dream.</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/3mwmwKBb44c"/>
+  <author>
+   <name>YouTube</name>
+   <uri>https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ</uri>
+  </author>
+  <published>2026-11-20T06:00:28+00:00</published>
+  <updated>2026-11-20T16:39:19+00:00</updated>
+  <media:group>
+   <media:title>and the crowd goes wild! @VanossGaming had a  🚌and a dream.</media:title>
+   <media:content url="https://www.youtube.com/v/3mwmwKBb44c?version=3" type="application/x-shockwave-flash" width="640" height="390"/>
+   <media:thumbnail url="https://i4.ytimg.com/vi/3mwmwKBb44c/hqdefault.jpg" width="480" height="360"/>
+   <media:description>thanks for tuning in to the GTAVI livestream. see you on the streets of Vice City. 🦩</media:description>
+   
+  </media:group>
+ </entry>
+</feed>

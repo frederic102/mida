@@ -6,6 +6,7 @@ import 'package:mida/cli/cli_stream_probe.dart';
 import 'package:mida/cli/mida_cli.dart';
 import 'package:mida/core/extractors/media_extractor.dart';
 import 'package:mida/core/extractors/media_models.dart';
+import 'package:mida/core/extractors/youtube/youtube_lister.dart';
 import 'package:mida/core/services/ffmpeg_locator.dart';
 import 'package:mida/features/download/models/download_models.dart';
 import 'package:mida/features/download/services/media_download_pipeline.dart';
@@ -230,6 +231,8 @@ Future<CliRun> runCli(
   RegistryBuilder? registryBuilder,
   PipelineFactory? pipelineFactory,
   ProbeFactory? probeFactory,
+  YoutubeLister? lister,
+  List<Duration>? pauses,
 }) async {
   final out = StringBuffer();
   final err = StringBuffer();
@@ -245,6 +248,9 @@ Future<CliRun> runCli(
     registryBuilder: registryBuilder ?? _offlineRegistry,
     pipelineFactory: pipelineFactory ?? (_) => pipeline ?? FakePipeline(),
     probeFactory: probeFactory ?? fakeProbe(),
+    lister: lister,
+    // Never really sleep in a unit test; record what the CLI asked for.
+    pause: (d) async => pauses?.add(d),
   );
   return CliRun(code, out.toString(), err.toString());
 }

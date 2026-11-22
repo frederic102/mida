@@ -18,7 +18,9 @@ Agent usage playbook for the CLI: `.claude/skills/mida-download/SKILL.md`.
 - Commands: `resolve <url>`, `download <url> [--out DIR] [--type video|audio]
   [--quality best|2160|1440|1080|720|480|360] [--container mp4|webm|mkv] [--audio-format mp3|m4a|opus|flac|wav]
   [--audio-quality best|320|256|128] [--format-id ID] [--captions] [--subtitles ko|en|ko,en] [--login-session]
-  [--headless] [--ffmpeg PATH] [--quiet]`, `sites`, `version`, `help` (also `--help`, `-h`). `sites` adds `measured_live`: ids that downloaded a
+  [--headless] [--ffmpeg PATH] [--quiet]`, `list <url> [--limit N]`, `download <url> --all [--limit N] [--archive FILE]`,
+  `sync --subscriptions FILE [--archive FILE]` (YouTube channels and playlists, see "Bulk commands"), `sites`,
+  `version`, `help` (also `--help`, `-h`). `sites` adds `measured_live`: ids that downloaded a
   real file in a recorded live run; of the v2.4.0 additions only facebook, pinterest, soop, telegram, streamable and bluesky are present.
 - Command lines are for PowerShell or bash; do not paste them into cmd.exe. Quote the URL and `--out` in single quotes
   (`'https://...'`; in PowerShell double any `'` inside as `''`, in bash write it as `'\''`). Never put a
@@ -43,7 +45,7 @@ Agent usage playbook for the CLI: `.claude/skills/mida-download/SKILL.md`.
     `BROWSER_CAPTURE_FAILED` (while downloading), and any other extractor status raised while downloading
   - 5 policy refusal: `DRM_PROTECTED`, `DRM`, `LOGIN_REQUIRED`, `HEADLESS_BLOCKED`, `BOT_CHECK_REQUIRED`,
     `PRIVATE`, `AGE_VERIFICATION_REQUIRED`, `CONTENT_CHECK_REQUIRED`
-  - 6 environment: `BROWSER_MISSING`, `FFMPEG_MISSING`, `NETWORK`, `OUTPUT_DIR_UNAVAILABLE`
+  - 6 environment: `BROWSER_MISSING`, `FFMPEG_MISSING`, `NETWORK`, `OUTPUT_DIR_UNAVAILABLE`, `ARCHIVE_UNAVAILABLE`
   - 7 `RATE_LIMITED`
   - 8 stdout closed early by the reader: the download may or may not have completed, check the output
     folder (a download that already saved its file exits 0)
@@ -60,6 +62,34 @@ Agent usage playbook for the CLI: `.claude/skills/mida-download/SKILL.md`.
 - `LOGIN_REQUIRED` from a native extractor first falls through to the generic and browser-capture tiers;
   it is reported only when those fail too. `--login-session` lets browser capture use the user's
   signed-in browser and is off by default.
+- Bulk commands (YouTube channel or playlist URLs only: `@handle`, `/channel/UC...`, `/c/name`, `/user/name`,
+  `/playlist?list=...`, `watch?v=...&list=...`; a single video URL is `UNSUPPORTED_URL`, 3):
+  - `list` ends in one `result` `kind: "list"`: `extractor` (`youtube`), `source` (`channel`|`playlist`), `id`, `title`,
+    `count`, `truncated`, `items: [{id, url, title, published}]`. `published` is null (the page shows only "8 days
+    ago"). Default cap 500 items, `--limit` 1 to 5000. A page of an unexpected shape is `PARSE_ERROR`, never a short list.
+  - `download --all` prints per item `result` `kind: "download"` (or `"skipped"`, `reason: "archived"`) or an `error`
+    line, each with `index` and `id`, and finally `result` `kind: "batch"` (`total`, `downloaded`, `skipped`, `failed`,
+    `other_failures`, `stopped`, `truncated`). Parse the LAST line, then read the exit code: 0 only when every attempted item
+    worked, else the worst item class (5, 6, 7, 4, 3 in that order). `--limit N` caps the listing (the first N items), so a
+    rerun with the same `--archive` reports them as skipped. Items are downloaded one at a time with a 2 s pause; the
+    batch stops (`stopped`: `policy`, `rate_limited`, `environment`) after three of those failures in a row, and at once
+    on a bad option (`usage`). `RATE_LIMITED` waits 30 s, 60 s before the next item.
+  - `sync` reads a subscriptions JSON file, `{"version": 1, "subscriptions": [{"source": "<UC id or channel URL>",
+    "channel_id": null, "title": "", "created_at": "<ISO time>", "output_dir": null, "last_checked": null}]}`, takes the
+    channel's latest uploads from its RSS feed (about 15) and downloads those published after `created_at` and not in
+    the archive (default `FILE.archive`; one video id per line). It writes `channel_id`, `title` and `last_checked`
+    back to the file. Output is the `download --all` shape plus `channels` and `channels_failed`; a channel whose
+    check failed is an `error` line with `channel` and does not stop the others. Missing or malformed file: exit 2.
+  - `--archive` unreadable: `ARCHIVE_UNAVAILABLE` (6). The archive and subscriptions files are written under an OS
+    lock (`<file>.lock`, left in place) with unique temp files and a re-read before every write, so the CLI and the
+    app can share them. `sync` refuses (2, `INVALID_VALUE`, before any network use) an `--archive` that is the same
+    file as `--subscriptions` or its lock/temp file, and a subscriptions file whose `version` is not 1 (it is left
+    byte for byte unchanged). With `--archive` (always for `sync`) a run holds an exclusive run lock
+    (`<archive>.run.lock`) for its whole length; a second run on the same archive fails at once with
+    `RUN_IN_PROGRESS` (6), so the same video is never downloaded twice at the same time. `sync` writes back only
+    `channel_id` (while null) and `last_checked` (never backwards) into the rows still on disk. The refusal streak and the rate-limit back-off count across all channels, RSS checks
+    included. A changed page shape (unknown entry, bad continuation token, truncated feed) is `PARSE_ERROR`, and a
+    failed check never updates `last_checked`.
 - Stop rules: on any exit 5 code, report and stop. Do not look for a workaround, do not spoof
   fingerprints, do not solve challenges. Rerun with `--login-session` only if the user asks, and after
   `HEADLESS_BLOCKED` only suggest a headed run. Never print cookies or headers.
