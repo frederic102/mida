@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/frederic102/mida?style=flat-square&color=brightgreen" alt="Release">
-  <img src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/license-AGPLv3-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/Dart-3.5%2B-0175C2?style=flat-square&logo=dart" alt="Dart">
   <img src="https://img.shields.io/badge/Flutter-desktop-02569B?style=flat-square&logo=flutter" alt="Flutter">
@@ -212,6 +212,6 @@ This software is provided for personal use. Users are responsible for ensuring c
 
 ## License
 
-[GPLv3](LICENSE)
+[AGPLv3](LICENSE) from the next release on. Releases up to and including v2.4.0 were published under GPLv3 and stay under it.
 
 Third-party: [FFmpeg](https://ffmpeg.org/legal.html) (GPL v2+)

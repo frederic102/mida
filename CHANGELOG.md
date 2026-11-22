@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- License changed from GPLv3 to AGPLv3 (`LICENSE`). Running a modified MiDa as a network service now also obliges you to offer its source. Releases up to v2.4.0 stay under GPLv3.
+
 ### Added
 - GUI: paste a YouTube channel or playlist link on the Download screen to get a
   list of its videos with Select all / Select none and a count; "Add N to

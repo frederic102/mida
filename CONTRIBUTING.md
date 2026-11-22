@@ -67,4 +67,4 @@ flutter run -d macos
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the GPLv3 License.
+By contributing, you agree that your contributions will be licensed under the GNU Affero General Public License v3.0 (AGPLv3).
