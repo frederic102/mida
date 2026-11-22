@@ -202,6 +202,10 @@ Tests: run scoped directories, for example `flutter test test/cli test/core/extr
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Ground rules in [AGENTS.md](AGENTS.md): no yt-dlp in any form, no new pub dependency without a stated reason, every source file under 400 lines, and no challenge solving, fingerprint spoofing, IP rotation or DRM bypass.
 
+## How it was built
+
+Built with Claude Code as a pair programmer. Product decisions, scope, policy and the review and live-check gates are mine.
+
 ## Disclaimer
 
 This software is provided for personal use. Users are responsible for ensuring compliance with applicable laws and the Terms of Service of each platform. Do not download copyrighted content without permission.
