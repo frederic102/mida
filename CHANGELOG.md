@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- GUI: paste a YouTube channel or playlist link on the Download screen to get a
+  list of its videos with Select all / Select none and a count; "Add N to
+  queue" puts exactly the ticked videos into the normal queue. A cut list
+  says so; a failed listing shows the same what/next-step panel as the queue.
+- GUI: Subscriptions screen (add or remove a channel, rename it, optional
+  folder per channel, Check now, last checked time, check interval 15 minutes
+  to 24 hours, default 60, stored in Settings). While the app is open it
+  checks once at start if the last check is older than the interval and then
+  every interval, never two at once, and queues only uploads published after
+  subscribing that are not in the archive. A video id is archived only after
+  its file was saved; a failed check never moves `last_checked`. It takes the
+  archive run lock for the whole pass and skips the check, saying so, when
+  `mida-cli` holds it. Data: `%APPDATA%\MiDa\MiDa\subscriptions.json` and
+  `subscriptions.json.archive`, the CLI's own formats, so `mida-cli sync
+  --subscriptions ... --archive ...` works on the same files.
+
 ## [2.4.0] - 2026-10-25
 
 Live check 2026-11-03 (headless CLI, `docs/coverage-corpus.md`): the native

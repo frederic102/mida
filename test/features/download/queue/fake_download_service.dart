@@ -11,11 +11,14 @@ import 'package:mida/features/settings/settings_service.dart';
 /// downloading, then completed (plus the folder open when the caller asked
 /// for it) or error. The call returns its own task, like the real one.
 class PendingDownload {
-  PendingDownload._(this.url, this.type, this.openFolderOnSuccess, this._svc);
+  PendingDownload._(this.url, this.type, this.openFolderOnSuccess, this._svc, this.outputDir);
 
   final String url;
   final DownloadType type;
   final bool openFolderOnSuccess;
+
+  /// The per-call folder the queue asked for (null = Settings folder).
+  final String? outputDir;
   final FakeDownloadService _svc;
   final Completer<DownloadTask?> _done = Completer<DownloadTask?>();
   DownloadTask? _task;
@@ -89,6 +92,7 @@ class FakeDownloadService extends DownloadService {
     DownloadType type, {
     DownloadOptions options = const DownloadOptions(),
     bool openFolderOnSuccess = true,
+    String? outputDir,
   }) async {
     if (rejectNext) {
       rejectNext = false;
@@ -96,7 +100,7 @@ class FakeDownloadService extends DownloadService {
     }
     active++;
     if (active > maxActive) maxActive = active;
-    final call = PendingDownload._(url, type, openFolderOnSuccess, this);
+    final call = PendingDownload._(url, type, openFolderOnSuccess, this, outputDir);
     pending.add(call);
     try {
       return await call._done.future;

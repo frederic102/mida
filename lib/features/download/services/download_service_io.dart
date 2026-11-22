@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import '../../../core/download/media_merger.dart';
@@ -73,11 +74,15 @@ class DownloadService extends ChangeNotifier {
   /// [openFolderOnSuccess]: open the download folder once the file is
   /// saved. Per call, so a caller that wants to batch the opens (the queue)
   /// turns it off for its own downloads without touching anyone else's.
+  ///
+  /// [outputDir]: save here instead of the Settings download folder (a
+  /// subscription's own folder). Created when missing.
   Future<DownloadTask?> download(
     String url,
     DownloadType type, {
     DownloadOptions options = const DownloadOptions(),
     bool openFolderOnSuccess = true,
+    String? outputDir,
   }) async {
     if (_isDownloading) {
       currentTask?.statusMessage = 'A download is already in progress. Wait for it to finish and try again.';
@@ -86,13 +91,20 @@ class DownloadService extends ChangeNotifier {
     }
     _isDownloading = true;
     try {
-      return await _runDownload(url, type, options, openFolderOnSuccess);
+      return await _runDownload(url, type, options, openFolderOnSuccess, outputDir);
     } finally {
       _isDownloading = false;
     }
   }
 
-  Future<DownloadTask> _runDownload(String url, DownloadType type, DownloadOptions options, bool openFolder) async {
+  Future<DownloadTask> _runDownload(
+    String url,
+    DownloadType type,
+    DownloadOptions options,
+    bool openFolder,
+    String? customDir,
+  ) async {
+    final saveDir = customDir ?? _settings.downloadPath;
     final platform = UrlParser.detectPlatform(url);
     final uri = Uri.tryParse(url);
 
@@ -136,12 +148,13 @@ class DownloadService extends ChangeNotifier {
       }
       task.status = DownloadStatus.downloading;
       notifyListeners();
+      if (customDir != null) await Directory(customDir).create(recursive: true);
 
       final outputPath = await _pipeline.download(
         info: mediaInfo,
         type: type,
         options: options,
-        outputDir: _settings.downloadPath,
+        outputDir: saveDir,
         onProgress: (progress) {
           task.progress = progress;
           notifyListeners();
@@ -156,7 +169,7 @@ class DownloadService extends ChangeNotifier {
       if (openFolder) {
         // Not awaited (the download is done); a file manager that fails to
         // start must not surface as an unhandled async error.
-        unawaited(FileUtils.openFolder(_settings.downloadPath).catchError((Object e) {
+        unawaited(FileUtils.openFolder(saveDir).catchError((Object e) {
           debugPrint('Could not open the download folder: $e');
         }));
       }

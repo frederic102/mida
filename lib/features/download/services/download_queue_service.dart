@@ -14,12 +14,27 @@ enum QueueItemState { queued, fetching, downloading, done, failed }
 /// One link in the GUI download queue. Read-only to the UI; only
 /// [DownloadQueueService] changes it.
 class QueueItem {
-  QueueItem._(this.id, this.url, this.type, this.options);
+  QueueItem._(this.id, this.url, this.type, this.options, {this.outputDir, this.openFolderWhenDone = true});
 
   final int id;
   final String url;
   final DownloadType type;
   final DownloadOptions options;
+
+  /// Save here instead of the Settings download folder (null = Settings).
+  final String? outputDir;
+
+  /// False for background work (subscriptions): never opens a folder window.
+  final bool openFolderWhenDone;
+
+  final _observers = <void Function(bool saved)>[];
+
+  /// [callback] hears every end of this item: true when its file was saved,
+  /// false when it failed or was removed before it ran. A retry that later
+  /// succeeds reports again, so an observer must not assume it is one-shot.
+  /// Items are compared by identity (two rows for one URL are two items only
+  /// if the first had already finished).
+  void observe(void Function(bool saved) callback) => _observers.add(callback);
 
   QueueItemState _state = QueueItemState.queued;
   double _progress = 0;
@@ -92,18 +107,18 @@ class DownloadQueueService extends ChangeNotifier {
 
   /// Adds [urls] in order and starts the runner if idle. Skips a URL that
   /// is already waiting or running; a finished one can be added again.
-  /// Returns how many were added.
+  /// Returns how many were added. [outputDir] and [openFolderWhenDone] apply
+  /// to every URL added by this call.
   int enqueueAll(
     Iterable<String> urls, {
     required DownloadType type,
     required DownloadOptions options,
+    String? outputDir,
+    bool openFolderWhenDone = true,
   }) {
-    final pending = {for (final i in _items) if (!i.isFinished) i.url};
     var added = 0;
     for (final url in urls) {
-      if (!pending.add(url)) continue;
-      _items.add(QueueItem._(_nextId++, url, type, options));
-      added++;
+      if (_add(url, type, options, outputDir, openFolderWhenDone) != null) added++;
     }
     if (added > 0) {
       _notify();
@@ -112,12 +127,59 @@ class DownloadQueueService extends ChangeNotifier {
     return added;
   }
 
+  /// Adds one link and returns its item, or null when the same link is
+  /// already waiting or running (then [pendingItem] returns that item).
+  QueueItem? enqueue(
+    String url, {
+    required DownloadType type,
+    required DownloadOptions options,
+    String? outputDir,
+    bool openFolderWhenDone = true,
+  }) {
+    final item = _add(url, type, options, outputDir, openFolderWhenDone);
+    if (item != null) {
+      _notify();
+      _start();
+    }
+    return item;
+  }
+
+  /// The waiting or running item for [url], if any.
+  QueueItem? pendingItem(String url) {
+    for (final i in _items) {
+      if (i.url == url && !i.isFinished) return i;
+    }
+    return null;
+  }
+
+  QueueItem? _add(String url, DownloadType type, DownloadOptions options, String? outputDir, bool openFolderWhenDone) {
+    if (pendingItem(url) != null) return null;
+    final item = QueueItem._(_nextId++, url, type, options, outputDir: outputDir, openFolderWhenDone: openFolderWhenDone);
+    _items.add(item);
+    return item;
+  }
+
   /// Removes a waiting or finished item. The running item cannot be
   /// removed because [DownloadService] has no cancel.
   void remove(int id) {
-    final before = _items.length;
-    _items.removeWhere((i) => i.id == id && !i.isActive);
-    if (_items.length != before) _notify();
+    final gone = [for (final i in _items) if (i.id == id && !i.isActive) i];
+    if (gone.isEmpty) return;
+    _items.removeWhere(gone.contains);
+    _notify();
+    // A finished item already reported; one removed while waiting reports now.
+    for (final i in gone) {
+      if (!i.isFinished) _report(i, false);
+    }
+  }
+
+  void _report(QueueItem item, bool saved) {
+    for (final observer in List.of(item._observers)) {
+      try {
+        observer(saved);
+      } catch (e) {
+        midaLog('A queue item observer failed: $e'); // never stop the queue for it
+      }
+    }
   }
 
   /// Puts a failed item back in line (same position) and starts the
@@ -148,7 +210,7 @@ class DownloadQueueService extends ChangeNotifier {
         url: item.url,
         type: item.type,
         options: item.options,
-        outDir: _settings.downloadPath,
+        outDir: item.outputDir ?? _settings.downloadPath,
         loginSession: _settings.useBrowserLoginSession,
       );
 
@@ -176,7 +238,7 @@ class DownloadQueueService extends ChangeNotifier {
     var saved = 0;
     try {
       for (var item = _nextQueued(); item != null && !_disposed; item = _nextQueued()) {
-        if (await _runOne(item)) saved++;
+        if (await _runOne(item) && item.openFolderWhenDone) saved++;
       }
     } finally {
       _pumping = false;
@@ -219,7 +281,13 @@ class DownloadQueueService extends ChangeNotifier {
     Object? thrown;
     DownloadTask? task;
     try {
-      task = await _downloads.download(item.url, item.type, options: item.options, openFolderOnSuccess: false);
+      task = await _downloads.download(
+        item.url,
+        item.type,
+        options: item.options,
+        openFolderOnSuccess: false,
+        outputDir: item.outputDir,
+      );
     } catch (e) {
       thrown = e;
     } finally {
@@ -243,6 +311,7 @@ class DownloadQueueService extends ChangeNotifier {
       _fail(item, task.error ?? noResultMessage);
     }
     _notify();
+    _report(item, saved);
     return saved;
   }
 
@@ -260,6 +329,10 @@ class DownloadQueueService extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    // The runner stops, so a waiting item will never run: tell its observers.
+    for (final i in List.of(_items)) {
+      if (i._state == QueueItemState.queued) _report(i, false);
+    }
     super.dispose();
   }
 }

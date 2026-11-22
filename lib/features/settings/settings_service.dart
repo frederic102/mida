@@ -16,6 +16,10 @@ class SettingsService extends ChangeNotifier {
   static const String _keyDownloadPath = 'download_path';
   static const String _keyUseBrowserLoginSession = 'use_browser_login_session';
   static const String keyOpenFolderAfterDownload = 'open_folder_after_download';
+  static const String keySubscriptionInterval = 'subscription_interval_minutes';
+  static const int defaultSubscriptionIntervalMinutes = 60;
+  static const int minSubscriptionIntervalMinutes = 15;
+  static const int maxSubscriptionIntervalMinutes = 1440;
 
   SharedPreferences? _prefs;
 
@@ -25,6 +29,10 @@ class SettingsService extends ChangeNotifier {
   final DownloadSettings _download = DownloadSettings();
 
   bool _openFolderAfterDownload = true;
+  int _subscriptionIntervalMinutes = defaultSubscriptionIntervalMinutes;
+
+  /// How often the app checks subscribed channels while it is open.
+  int get subscriptionIntervalMinutes => _subscriptionIntervalMinutes;
 
   DownloadSettings get downloadSettings => _download;
   String get downloadPath => _download.downloadPath;
@@ -39,6 +47,7 @@ class SettingsService extends ChangeNotifier {
     _download.downloadPath = _prefs!.getString(_keyDownloadPath) ?? await _getDefaultDownloadPath();
     _download.useBrowserLoginSession = _prefs!.getBool(_keyUseBrowserLoginSession) ?? false;
     _openFolderAfterDownload = _prefs!.getBool(keyOpenFolderAfterDownload) ?? true;
+    _subscriptionIntervalMinutes = _clampInterval(_prefs!.getInt(keySubscriptionInterval));
     notifyListeners();
   }
 
@@ -79,6 +88,18 @@ class SettingsService extends ChangeNotifier {
   Future<void> setUseBrowserLoginSession(bool value) async {
     _download.useBrowserLoginSession = value;
     await _prefs?.setBool(_keyUseBrowserLoginSession, value);
+    notifyListeners();
+  }
+
+  static int _clampInterval(int? minutes) =>
+      (minutes ?? defaultSubscriptionIntervalMinutes).clamp(minSubscriptionIntervalMinutes, maxSubscriptionIntervalMinutes).toInt();
+
+  /// Stored in minutes, kept within 15 minutes to 24 hours.
+  Future<void> setSubscriptionIntervalMinutes(int minutes) async {
+    final next = _clampInterval(minutes);
+    if (next == _subscriptionIntervalMinutes) return;
+    _subscriptionIntervalMinutes = next;
+    await _prefs?.setInt(keySubscriptionInterval, next);
     notifyListeners();
   }
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'features/settings/settings_service.dart';
@@ -9,14 +11,23 @@ import 'features/extract/screens/extract_screen.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/download/services/download_queue_service.dart';
 import 'features/download/services/download_service.dart';
+import 'core/extractors/youtube/youtube_lister.dart';
+import 'core/subscriptions/subscription.dart';
+import 'features/subscriptions/screens/subscriptions_screen.dart';
+import 'features/subscriptions/services/subscription_list.dart';
+import 'features/subscriptions/services/subscription_paths.dart';
+import 'features/subscriptions/services/subscription_scheduler.dart';
 
 class MiDaApp extends StatelessWidget {
-  const MiDaApp({super.key});
+  const MiDaApp({super.key, required this.subscriptionPaths});
+
+  final SubscriptionPaths subscriptionPaths;
 
   @override
   Widget build(BuildContext context) {
     // GUI-only state lives here rather than in main.dart: the session
-    // download queue that feeds DownloadService.
+    // download queue that feeds DownloadService, and the subscription
+    // checker that feeds the queue while the app is open.
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(
@@ -24,6 +35,29 @@ class MiDaApp extends StatelessWidget {
             downloads: context.read<DownloadService>(),
             settings: context.read<SettingsService>(),
           ),
+        ),
+        Provider<YoutubeLister>(create: (_) => YoutubeLister()),
+        ChangeNotifierProvider(
+          create: (context) => SubscriptionList(
+            store: SubscriptionStore(subscriptionPaths.subscriptions),
+            lister: context.read<YoutubeLister>(),
+            storageWarning: subscriptionPaths.temporary ? SubscriptionPaths.temporaryWarning : null,
+          ),
+        ),
+        ChangeNotifierProvider(
+          lazy: false, // the first check must run at app start, not when the screen opens
+          create: (context) {
+            final settings = context.read<SettingsService>();
+            final scheduler = SubscriptionScheduler(
+              subscriptions: context.read<SubscriptionList>(),
+              archiveFile: subscriptionPaths.archive,
+              lister: context.read<YoutubeLister>(),
+              queue: context.read<DownloadQueueService>(),
+              interval: () => Duration(minutes: settings.subscriptionIntervalMinutes),
+            );
+            unawaited(scheduler.start());
+            return scheduler;
+          },
         ),
       ],
       child: Consumer<SettingsService>(
@@ -56,6 +90,7 @@ class _MainScreenState extends State<MainScreen> {
     DownloadScreen(),
     CompressScreen(),
     ExtractScreen(),
+    SubscriptionsScreen(),
     SettingsScreen(),
   ];
 
@@ -84,8 +119,9 @@ class _MainScreenState extends State<MainScreen> {
                   _buildNavItem(0, Icons.download_rounded, 'Download'),
                   _buildNavItem(1, Icons.compress_rounded, 'Compress'),
                   _buildNavItem(2, Icons.music_note_rounded, 'Extract Audio'),
+                  _buildNavItem(3, Icons.subscriptions_rounded, 'Subscriptions'),
                   const Spacer(),
-                  _buildNavItem(3, Icons.settings_rounded, 'Settings'),
+                  _buildNavItem(4, Icons.settings_rounded, 'Settings'),
                   const SizedBox(height: 16),
                 ],
               ),
@@ -127,6 +163,11 @@ class _MainScreenState extends State<MainScreen> {
               icon: Icon(Icons.music_note_outlined),
               selectedIcon: Icon(Icons.music_note_rounded),
               label: 'Audio',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.subscriptions_outlined),
+              selectedIcon: Icon(Icons.subscriptions_rounded),
+              label: 'Subscriptions',
             ),
             NavigationDestination(
               icon: Icon(Icons.settings_outlined),

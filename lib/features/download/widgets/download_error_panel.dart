@@ -8,12 +8,15 @@ class DownloadErrorPanel extends StatefulWidget {
     super.key,
     required this.error,
     required this.onRetry,
-    required this.onEnableBrowserLoginAndRetry,
+    this.onEnableBrowserLoginAndRetry,
   });
 
   final ActionableError error;
   final VoidCallback onRetry;
-  final VoidCallback onEnableBrowserLoginAndRetry;
+
+  /// Null where the browser login session does not apply (the channel list
+  /// does not use it); the button is then never shown.
+  final VoidCallback? onEnableBrowserLoginAndRetry;
 
   @override
   State<DownloadErrorPanel> createState() => _DownloadErrorPanelState();
@@ -52,7 +55,7 @@ class _DownloadErrorPanelState extends State<DownloadErrorPanel> {
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              if (error.action == FailureAction.enableBrowserLoginAndRetry)
+              if (error.action == FailureAction.enableBrowserLoginAndRetry && widget.onEnableBrowserLoginAndRetry != null)
                 FilledButton.tonalIcon(
                   onPressed: widget.onEnableBrowserLoginAndRetry,
                   icon: const Icon(Icons.login, size: 18),

@@ -28,6 +28,7 @@
 - **Video Compression** - Two-pass encoding with target file size (presets or custom)
 - **Audio Extraction** - Extract audio tracks from local video files
 - **Subtitle Download** - Download subtitles as .srt files
+- **YouTube channels and playlists** - Paste a channel or playlist link, tick the videos, add them to the queue; subscribe to a channel and MiDa queues its new uploads while the app is open (see [Channels and subscriptions](#channels-and-subscriptions))
 
 ## Download
 
@@ -39,6 +40,20 @@ Go to [**Releases**](https://github.com/frederic102/mida/releases/latest) and do
 | macOS | No installer published yet. A build script exists (`scripts/build_macos.sh`) but no release has been built or tested on a Mac. | Build from source |
 
 FFmpeg is bundled in the installer. No additional setup required. Downloads from YouTube, X (Twitter), TikTok, Instagram and more natively; see [Supported Sites](docs/supported-sites.md) for the full list. Other sites are handled by generic page analysis and, when needed, a real off-screen window of your installed Google Chrome, or Microsoft Edge when Chrome is missing (headless only as a fallback, for example on a machine with no interactive session). DRM-protected content, live streams, and most login-only or age-gated content are not supported; see [Supported Sites](docs/supported-sites.md) for the exceptions. Set `MIDA_BROWSER_PATH` to point at a specific browser install, and turn on "Use browser login session" in Settings to let MiDa reuse your own signed-in browser session for sign-in-only videos (off by default).
+
+## Channels and subscriptions
+
+- **Pick videos from a channel or playlist.** Paste a `youtube.com/@name`, `/channel/UC...`, `/c/name`, `/user/name` or `/playlist?list=...` link into the Download screen. MiDa lists the videos (up to 500, with a notice when the list was cut); tick some, or use Select all / Select none, then "Add N to queue". They download with the options chosen on the Download screen. A `watch?v=...&list=...` link stays a single video; paste the `playlist?list=` link to get the list.
+- **Subscriptions screen.** Add a channel link (the title comes from the channel and can be renamed), give a channel its own folder if you want (otherwise the Settings download folder is used), remove it, see when it was last checked, press "Check now", and set how often to check (15 minutes to 24 hours, default 60).
+- **Only while MiDa is open.** There is no background service or scheduled task. MiDa checks once at start if the last check is older than the interval, then every interval. Only uploads published after you subscribed are queued, and only if they are not in the archive, so nothing from the back catalogue is downloaded by surprise. These automatic downloads use the default options (best video, MP4) and never open a folder window.
+- **One run at a time.** While a check and its downloads run, `mida-cli sync` on the same archive is refused (`RUN_IN_PROGRESS`). If `mida-cli` is already running on it, the app skips that check and says so on the Subscriptions screen.
+- **Where the data is.** In the app's per-user data folder, next to the Settings file: `%APPDATA%\MiDa\MiDa\subscriptions.json` (the subscriptions) and `%APPDATA%\MiDa\MiDa\subscriptions.json.archive` (one downloaded video id per line). The format is the CLI's own, and the Subscriptions screen prints the exact paths, so the same data works from a script:
+
+  ```powershell
+  mida-cli sync --subscriptions "$env:APPDATA\MiDa\MiDa\subscriptions.json" --archive "$env:APPDATA\MiDa\MiDa\subscriptions.json.archive"
+  ```
+
+  A video id is added to the archive only after its file was saved, always while the archive's run lock is held, so a failed download is tried again at the next check. If a failed download is retried by hand later and `mida-cli` has the lock at that moment, the id is written by the next check instead. That deferred id is kept in memory only: if MiDa is closed before the next check records it, the video can be downloaded again. If MiDa cannot find its data folder it falls back to the temporary folder and the Subscriptions screen says so.
 
 ## What actually works
 

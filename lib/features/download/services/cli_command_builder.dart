@@ -80,6 +80,16 @@ class CliCommandBuilder {
     return CliCommandResult.ok(parts.join(' '));
   }
 
+  /// The `mida-cli sync` line for the app's own subscriptions and archive
+  /// files, with the same quoting model and the same refusals as [build].
+  CliCommandResult sync({required String subscriptions, required String archive}) {
+    for (final path in [subscriptions, archive]) {
+      final problem = unquotable(path);
+      if (problem != null) return CliCommandResult.refused('A data file path contains $problem.');
+    }
+    return CliCommandResult.ok("mida-cli sync --subscriptions '$subscriptions' --archive '$archive'");
+  }
+
   /// A description of the first character in [text] that single quotes
   /// cannot carry literally in both PowerShell and bash, or null.
   static String? unquotable(String text) {

@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../../core/extractors/youtube/youtube_list_models.dart';
+import '../../../core/extractors/youtube/youtube_lister.dart';
+import '../services/channel_list_controller.dart';
 import '../services/download_queue_service.dart';
 import '../services/download_service.dart';
+import '../widgets/channel_list_card.dart';
 import '../widgets/download_action_button.dart';
 import '../widgets/download_options_card.dart';
 import '../widgets/download_queue_card.dart';
@@ -11,7 +15,11 @@ import '../widgets/download_url_input_card.dart';
 import 'url_batch.dart';
 
 class DownloadScreen extends StatefulWidget {
-  const DownloadScreen({super.key});
+  /// [lister] and [listDebounce] exist for tests; the app uses the defaults.
+  const DownloadScreen({super.key, this.lister, this.listDebounce = const Duration(milliseconds: 500)});
+
+  final YoutubeLister? lister;
+  final Duration listDebounce;
 
   @override
   State<DownloadScreen> createState() => _DownloadScreenState();
@@ -21,6 +29,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   final _urlController = TextEditingController();
   final _urlFocus = FocusNode();
   late final AppLifecycleListener _lifecycle;
+  late final ChannelListController _list;
 
   UrlBatch _batch = UrlBatch.empty;
   DownloadType _selectedType = DownloadType.video;
@@ -39,6 +48,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   @override
   void initState() {
     super.initState();
+    _list = ChannelListController(widget.lister ?? YoutubeLister(), debounce: widget.listDebounce);
     // Window focus on desktop arrives as a resume; also check once on open.
     _lifecycle = AppLifecycleListener(onResume: _checkClipboard);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkClipboard());
@@ -47,6 +57,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
   @override
   void dispose() {
     _lifecycle.dispose();
+    _list.dispose();
     _urlController.dispose();
     _urlFocus.dispose();
     super.dispose();
@@ -79,7 +90,38 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
   void _onUrlChanged(String value) {
     _batch = UrlBatch.parse(value);
+    _list.updateUrls(_batch.urls);
     _refreshSuggestion();
+  }
+
+  /// Links that are plain videos; channel and playlist links go to the list card.
+  List<String> get _directUrls => [for (final u in _batch.urls) if (listTargetOf(u) == null) u];
+
+  DownloadOptions get _options => DownloadOptions(
+        videoQuality: _selectedVideoQuality,
+        videoFormat: _selectedVideoFormat,
+        audioQuality: _selectedAudioQuality,
+        audioFormat: _selectedAudioFormat,
+        subtitleOption: _selectedSubtitle,
+      );
+
+  void _notifySkipped(int skipped) {
+    if (skipped <= 0) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text(skipped == 1
+          ? '1 link was already waiting in the queue, so it was not added twice.'
+          : '$skipped links were already waiting in the queue, so they were not added twice.'),
+    ));
+  }
+
+  void _addChosen(List<YoutubeListItem> chosen) {
+    final added = context.read<DownloadQueueService>().enqueueAll(
+          [for (final i in chosen) i.url.toString()],
+          type: _selectedType,
+          options: _options,
+        );
+    _list.selectNone();
+    _notifySkipped(chosen.length - added);
   }
 
   /// Appends [text] on its own line; never starts a download.
@@ -117,29 +159,14 @@ class _DownloadScreenState extends State<DownloadScreen> {
   }
 
   void _start() {
-    if (_batch.isEmpty) return;
-    final queue = context.read<DownloadQueueService>();
-    final wanted = _batch.urls.length;
-    final added = queue.enqueueAll(
-      _batch.urls,
-      type: _selectedType,
-      options: DownloadOptions(
-        videoQuality: _selectedVideoQuality,
-        videoFormat: _selectedVideoFormat,
-        audioQuality: _selectedAudioQuality,
-        audioFormat: _selectedAudioFormat,
-        subtitleOption: _selectedSubtitle,
-      ),
-    );
-    _clearField();
-    final skipped = wanted - added;
-    if (skipped > 0) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-        content: Text(skipped == 1
-            ? '1 link was already waiting in the queue, so it was not added twice.'
-            : '$skipped links were already waiting in the queue, so they were not added twice.'),
-      ));
-    }
+    final direct = _directUrls;
+    if (direct.isEmpty) return;
+    final added = context.read<DownloadQueueService>().enqueueAll(direct, type: _selectedType, options: _options);
+    // A channel or playlist link stays in the field: its list is still on screen.
+    final listLinks = [for (final u in _batch.urls) if (listTargetOf(u) != null) u];
+    _urlController.text = listLinks.join('\n');
+    _onUrlChanged(_urlController.text);
+    _notifySkipped(direct.length - added);
   }
 
   @override
@@ -165,7 +192,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
               onAcceptSuggestion: _acceptSuggestion,
               onDismissSuggestion: _dismissSuggestion,
             ),
-            const SizedBox(height: 24),
+            ChannelListCard(controller: _list, onAdd: _addChosen),
             DownloadTypeSelectorCard(
               selectedType: _selectedType,
               onTypeSelected: (type) => setState(() => _selectedType = type),
@@ -186,7 +213,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
             ),
             const SizedBox(height: 24),
             DownloadActionButton(
-              linkCount: _batch.urls.length,
+              linkCount: _directUrls.length,
               queueBusy: queueBusy,
               onPressed: _start,
             ),
