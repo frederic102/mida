@@ -6,9 +6,9 @@ Thank you for your interest in contributing to MiDa!
 
 ### Prerequisites
 
+- Windows 10 or later (MiDa is Windows-only for now; macOS has not been built or tested)
 - Flutter SDK (3.5.0+)
-- Windows: Visual Studio 2022 with C++ Desktop Development workload
-- macOS: Xcode
+- Visual Studio 2022 with C++ Desktop Development workload
 
 ### Development Setup
 
@@ -20,15 +20,8 @@ cd mida
 
 2. Download required binaries
 
-**Windows:**
 ```powershell
 .\scripts\download_binaries.ps1
-```
-
-**macOS:**
-```bash
-chmod +x scripts/download_binaries_mac.sh
-./scripts/download_binaries_mac.sh
 ```
 
 3. Install dependencies
@@ -38,12 +31,10 @@ flutter pub get
 
 4. Run the app
 ```bash
-# Windows
 flutter run -d windows
-
-# macOS
-flutter run -d macos
 ```
+
+The macOS scripts in `scripts/` (`build_macos.sh`, `download_binaries_mac.sh`) are kept for a future port; the repo has no `macos/` runner yet.
 
 ## Code Style
 
